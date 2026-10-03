@@ -1,0 +1,96 @@
+{
+  "BlackRin_MiniMaxH3Integration": {
+    "display_name": "BlackRin MiniMax H3 Integration",
+    "inputs": {
+      "clip_name": {
+        "name": "CLIP model"
+      },
+      "video_vae_name": {
+        "name": "video VAE"
+      },
+      "audio_vae_name": {
+        "name": "audio VAE"
+      },
+      "aspect": {
+        "name": "aspect ratio",
+        "options": {
+          "adaptive": "adaptive",
+          "16:9": "16:9",
+          "9:16": "9:16",
+          "3:2": "3:2",
+          "2:3": "2:3",
+          "4:3": "4:3",
+          "3:4": "3:4",
+          "1:1": "1:1",
+          "21:9": "21:9"
+        }
+      },
+      "megapixels": {
+        "name": "megapixels"
+      },
+      "prompt_override": {
+        "name": "prompt"
+      },
+      "spec_override": {
+        "name": "spec"
+      },
+      "duration_seconds": {
+        "name": "duration (seconds)"
+      },
+      "upscale_megapixels": {
+        "name": "Upscale megapixels"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": ">"
+      }
+    }
+  },
+  "BlackRin_MiniMaxH3Adapter": {
+    "display_name": "BlackRin MiniMax H3 Adapter",
+    "inputs": {
+      "integration": {
+        "name": "<"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "positive"
+      },
+      "1": {
+        "name": "AV latent"
+      },
+      "2": {
+        "name": "video VAE"
+      },
+      "3": {
+        "name": "audio VAE"
+      },
+      "4": {
+        "name": "model number"
+      },
+      "5": {
+        "name": "mux audio"
+      },
+      "6": {
+        "name": "is original audio"
+      },
+      "7": {
+        "name": "upscale_width"
+      },
+      "8": {
+        "name": "upscale_height"
+      },
+      "9": {
+        "name": "total_frames"
+      },
+      "10": {
+        "name": "trims"
+      },
+      "11": {
+        "name": "upscale conditioning"
+      }
+    }
+  }
+}

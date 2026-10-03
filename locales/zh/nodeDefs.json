@@ -1,0 +1,96 @@
+{
+  "BlackRin_MiniMaxH3Integration": {
+    "display_name": "✨ BlackRin H3智能一体化",
+    "inputs": {
+      "clip_name": {
+        "name": "CLIP模型"
+      },
+      "video_vae_name": {
+        "name": "视频 VAE"
+      },
+      "audio_vae_name": {
+        "name": "音频 VAE"
+      },
+      "aspect": {
+        "name": "宽高比例",
+        "options": {
+          "adaptive": "自适应",
+          "16:9": "16:9",
+          "9:16": "9:16",
+          "3:2": "3:2",
+          "2:3": "2:3",
+          "4:3": "4:3",
+          "3:4": "3:4",
+          "1:1": "1:1",
+          "21:9": "21:9"
+        }
+      },
+      "megapixels": {
+        "name": "百万像素"
+      },
+      "prompt_override": {
+        "name": "提示词"
+      },
+      "spec_override": {
+        "name": "规范模板"
+      },
+      "duration_seconds": {
+        "name": "时长（秒）"
+      },
+      "upscale_megapixels": {
+        "name": "二采百万像素"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": ">"
+      }
+    }
+  },
+  "BlackRin_MiniMaxH3Adapter": {
+    "display_name": "✨ BlackRin H3适配器",
+    "inputs": {
+      "integration": {
+        "name": "<"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "正面条件"
+      },
+      "1": {
+        "name": "音视频潜空间"
+      },
+      "2": {
+        "name": "视频 VAE"
+      },
+      "3": {
+        "name": "音频 VAE"
+      },
+      "4": {
+        "name": "模型序号"
+      },
+      "5": {
+        "name": "原始音频"
+      },
+      "6": {
+        "name": "是否原声"
+      },
+      "7": {
+        "name": "二采宽度"
+      },
+      "8": {
+        "name": "二采高度"
+      },
+      "9": {
+        "name": "总帧数"
+      },
+      "10": {
+        "name": "接续裁剪帧"
+      },
+      "11": {
+        "name": "二采条件"
+      }
+    }
+  }
+}

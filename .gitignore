@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+
+# 本地个人工作流（含私人提示词与路径，不入库）
+H3-Blackrin-分段视频二采放大一体流.json
+
+# 本地调试副本（用完即删，不入库）
+served_check.js
+
+# 打包与编辑器
+*.zip
+*.7z
+.vscode/

@@ -754,12 +754,21 @@ def _local_generate_impl(config: dict, payload: dict) -> str:
         for item in media:
             label = str(item.get("label") or "")
             kind = str(item.get("kind") or "")
+            try:
+                at_seconds = float(item.get("guide_seconds"))
+            except (TypeError, ValueError):
+                at_seconds = None
             if kind == "audio":
                 content.append({"type": "text", "text": f"{label} is an uploaded audio reference; audio data is not transmitted."})
             else:
                 for data_url in item.get("images") or []:
                     content.append({"type": "image", "image": _data_url_image(data_url)})
-                    content.append({"type": "text", "text": f"This visual belongs to {label}; use the label, never a filename."})
+                    if at_seconds is not None:
+                        content.append({"type": "text", "text":
+                            f"This visual is a picture anchor pinned at {at_seconds:.2f}s in the target video "
+                            f"({label}); it is NOT a numbered prompt label — describe its visible content in words."})
+                    else:
+                        content.append({"type": "text", "text": f"This visual belongs to {label}; use the label, never a filename."})
         system = _system_prompt(
             str(payload.get("task") or "T2VA"), float(payload.get("duration") or 5),
             [str(item.get("label")) for item in media if item.get("label")],
@@ -869,6 +878,60 @@ def _endpoint(config: dict) -> str:
     return f"{base}/chat/completions"
 
 
+def _node_anchor_note(context: dict, duration: float) -> str:
+    """把节点提供的锚点事实（关键帧 / 中段引导图）渲染成附加说明。
+
+    自定义规则会整体替换内置系统提示，但"第几秒锚了哪张图"是节点事实，
+    无论用哪套规则都必须告知模型，否则会写出与锚定画面冲突的提示词。
+    """
+    if not isinstance(context, dict):
+        return ""
+    lines: list[str] = []
+    guide_count = 0
+    for item in context.get("keyframes") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        role = str(item.get("role") or "").strip()
+        if not label:
+            continue
+        when = ("the exact first frame at 0.00s" if role == "exact_first_frame"
+                else f"the exact last frame at {duration:.2f}s" if role == "exact_last_frame"
+                else "a visual keyframe anchor")
+        lines.append(f"- {label} is {when}.")
+    for item in context.get("mid_guide_images") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        try:
+            at_seconds = float(item.get("at_seconds") or 0)
+        except (TypeError, ValueError):
+            at_seconds = 0.0
+        note = str(item.get("note") or "").strip()
+        # 用户给这张图写的用途说明（例如"起始造型"）。它说明的是剧情语义，
+        # 不是画面内容描述，所以原样转达，让模型知道该图在叙事里代表什么。
+        role = f" ({note})" if note else ""
+        lines.append(f"- {label}{role} is pinned inside the clip at about {at_seconds:.2f}s.")
+        guide_count += 1
+    if not lines:
+        return ""
+    return (
+        "\n\nNode-supplied anchor facts (these override anything above if they conflict):\n"
+        + "\n".join(lines)
+        + "\nKeep the described moments consistent with what those anchored images show "
+          "(subjects, wardrobe, pose, framing, lighting, style). Do not invent anchors that "
+          "were not listed, and do not call them first or last frames unless stated."
+        + (" Guide frames are picture anchors pinned at fixed times, not numbered prompt labels: "
+           "describe their content in words at the stated moments and do not invent a label "
+           "for them. When several guide frames are pinned at different times they mark the "
+           "required visual progression of the timeline, so describe how the picture evolves "
+           "from one to the next at those moments."
+           if guide_count > 0 else "")
+    )
+
+
 def _system_prompt(
     task: str,
     duration: float,
@@ -954,6 +1017,8 @@ def _system_prompt(
         if keyframe_lines else
         "No concrete keyframe role was supplied by the node; do not invent one."
     )
+
+    guide_rule = _node_anchor_note(context, duration).strip().replace("\n", " ")
 
     audio_mode = str(context.get("audio_mode") or "native")
     audio_rule = {
@@ -1108,7 +1173,7 @@ def _system_prompt(
         "information. Do not create labels outside the supplied label list, renumber labels, "
         "or replace labels with filenames. "
         f"Task={task}; duration={duration:.2f}s; available labels={', '.join(labels) or 'none'}. "
-        f"{label_rule} {keyframe_rule} {audio_rule} {structure}{singing_rule}{transfer_rule} {dialogue_rule} "
+        f"{label_rule} {keyframe_rule} {guide_rule} {audio_rule} {structure}{singing_rule}{transfer_rule} {dialogue_rule} "
         f"{subject_shorthand_rule} "
         "Audio items are label-only references; never claim you listened to them. Before returning, silently check "
         "that every required section is present in the correct order, every used label exists, no filename appears, "
@@ -1138,11 +1203,21 @@ def _user_parts(prompt: str, media: list[dict], read_media: bool) -> list[dict]:
     for item in media:
         label = str(item.get("label") or "")
         kind = str(item.get("kind") or "")
+        try:
+            at_seconds = float(item.get("guide_seconds"))
+        except (TypeError, ValueError):
+            at_seconds = None
         if kind == "audio":
             parts.append({"type": "text", "text": f"{label} is an uploaded audio reference (content not transmitted)."})
         elif read_media:
             for index, data_url in enumerate(item.get("images") or []):
-                parts.append({"type": "text", "text": f"{label} visual {index + 1}."})
+                if at_seconds is not None:
+                    # 引导图：只做画面锚点，不是提示词标签——必须明说，否则模型会编造标签
+                    parts.append({"type": "text", "text":
+                        f"{label} is a picture anchor pinned at {at_seconds:.2f}s in the target video; "
+                        "it is NOT a numbered prompt label. Describe its visible content in words at that moment."})
+                else:
+                    parts.append({"type": "text", "text": f"{label} visual {index + 1}."})
                 parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "low"}})
         else:
             parts.append({"type": "text", "text": f"{label} is an uploaded {kind} reference."})
@@ -1415,7 +1490,11 @@ def _resolve_system_prompt(config: dict, payload: dict) -> tuple[str, bool]:
         match = next((item for item in _optimizer_rules() if item["name"] == rule), None)
         if match is None:
             raise RuntimeError(f"未找到提示词小助手规则「{rule}」，请重新打开优化设置选择有效规则")
-        return match["content"], True
+        # 规则模式下 _system_prompt 被整体替换，但引导图/关键帧这些节点事实
+        # 必须继续告知模型，否则它会写出与锚定画面冲突的提示词。
+        context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+        anchors = _node_anchor_note(context, float(payload.get("duration") or 5))
+        return (match["content"] + anchors if anchors else match["content"]), True
     task = str(payload.get("task") or "T2VA")
     duration = float(payload.get("duration") or 5)
     media = payload.get("media") if isinstance(payload.get("media"), list) else []
@@ -1542,12 +1621,22 @@ async def _request_runninghub(config: dict, payload: dict) -> str:
                 label = str(item.get("label") or "")
                 if kind == "image":
                     images = item.get("images") or []
+                    try:
+                        at_seconds = float(item.get("guide_seconds"))
+                    except (TypeError, ValueError):
+                        at_seconds = None
                     if image_index < len(image_nodes) and images:
                         node_id = image_nodes[image_index]
                         node_values[node_id] = await _runninghub_upload(
                             session, api_key, data_url=images[0], filename=f"reference_{image_index + 1}.jpg", api_base=rh_api_base
                         )
-                        mapping_notes.append(f"{label} corresponds to uploaded image {image_index + 1}.")
+                        if at_seconds is not None:
+                            mapping_notes.append(
+                                f"{label} corresponds to uploaded image {image_index + 1} and is a picture anchor "
+                                f"pinned at {at_seconds:.2f}s; it is not a numbered prompt label."
+                            )
+                        else:
+                            mapping_notes.append(f"{label} corresponds to uploaded image {image_index + 1}.")
                         image_index += 1
                     else:
                         mapping_notes.append(f"{label} exists as an image reference label, but its visual file was not transmitted.")

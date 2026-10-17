@@ -212,27 +212,35 @@ def resolve_task_type(task_type: str, first_frame, last_frame, has_refs: bool) -
     return requested
 
 
-REFERENCE_SIZE_SCALES = {"match": 1.0, "1.2x": 1.2, "1.5x": 1.5, "2x": 2.0}
-
-
-def _reference_pixel_budget(width: int, height: int, mode: str, *, video: bool) -> int:
-    maximum = MAX_REFERENCE_VIDEO_PIXELS if video else MAX_REFERENCE_IMAGE_PIXELS
-    if mode == "max":
-        return maximum
-    desired = width * height * REFERENCE_SIZE_SCALES.get(mode, 1.0)
+def _reference_pixel_budget(width: int, height: int, *, video: bool, zoom: float = 1.0) -> int:
+    # match scales references to the generation canvas area, times the zoom
+    # multiplier. max is not expressed here: it depends on the source's own
+    # short edge, so _resize_reference_media handles that branch instead.
+    desired = width * height * max(1.0, float(zoom))
     if video:
         desired = max(MIN_REFERENCE_VIDEO_PIXELS, desired)
+    maximum = MAX_REFERENCE_VIDEO_PIXELS if video else MAX_REFERENCE_IMAGE_PIXELS
     return min(maximum, round(desired))
 
 
-def _resize_reference_media(media, desired_pixels: int):
+REF_SHORT_EDGE = 2048
+
+
+def _resize_reference_media(media, desired_pixels: int, mode: str = "match"):
     h, w = int(media.shape[1]), int(media.shape[2])
     source_pixels = w * h
-    # Reference media is never enlarged. When it is already below the chosen
-    # budget, retain its pixel scale and only crop the sub-32 edge remainder.
-    scale = min(1.0, math.sqrt(desired_pixels / source_pixels))
-    scaled_width = max(CANVAS_MULTIPLE, round(w * scale))
-    scaled_height = max(CANVAS_MULTIPLE, round(h * scale))
+    if mode == "max":
+        # JZL's max is an upper bound, not a target: a source whose short edge
+        # already exceeds 2048 is shrunk to 2048, and anything smaller is left
+        # untouched (the official min(1.0, ...) clamp).
+        ratio = min(1.0, REF_SHORT_EDGE / min(w, h))
+    else:
+        # match never enlarges on its own. desired_pixels already carries the
+        # zoom multiplier, so a zoom above 1.0 is the only way the budget can
+        # exceed a smaller source, which is how enlarging stays opt-in.
+        ratio = min(1.0, math.sqrt(desired_pixels / source_pixels))
+    scaled_width = max(CANVAS_MULTIPLE, round(w * ratio))
+    scaled_height = max(CANVAS_MULTIPLE, round(h * ratio))
     target_width = max(CANVAS_MULTIPLE, math.floor(scaled_width / CANVAS_MULTIPLE) * CANVAS_MULTIPLE)
     target_height = max(CANVAS_MULTIPLE, math.floor(scaled_height / CANVAS_MULTIPLE) * CANVAS_MULTIPLE)
     resized = resize_image(media, scaled_width, scaled_height)
@@ -241,14 +249,20 @@ def _resize_reference_media(media, desired_pixels: int):
     return resized[:, top:top + target_height, left:left + target_width], target_width, target_height
 
 
-def _resize_reference_image(image, width: int, height: int, ref_image_size: str):
-    budget = _reference_pixel_budget(width, height, ref_image_size, video=False)
-    return _resize_reference_media(image[:1], budget)
+def _resize_reference_image(image, width: int, height: int, ref_image_size: str, ref_image_zoom: float = 1.0):
+    # max decides its own target from the source's short edge, so the canvas
+    # budget (and the zoom multiplier that scales it) only applies to match.
+    budget = _reference_pixel_budget(
+        width, height, video=False, zoom=1.0 if ref_image_size == "max" else ref_image_zoom,
+    )
+    return _resize_reference_media(image[:1], budget, mode=ref_image_size)
 
 
-def _resize_reference_video(frames, width: int, height: int, ref_image_size: str):
-    budget = _reference_pixel_budget(width, height, ref_image_size, video=True)
-    return _resize_reference_media(frames, budget)
+def _resize_reference_video(frames, width: int, height: int, ref_image_size: str, ref_image_zoom: float = 1.0):
+    budget = _reference_pixel_budget(
+        width, height, video=True, zoom=1.0 if ref_image_size == "max" else ref_image_zoom,
+    )
+    return _resize_reference_media(frames, budget, mode=ref_image_size)
 
 
 def _encode_reference_audio(audio_vae, audio: dict):
@@ -268,8 +282,8 @@ def build_conditioning(
     audio_mode: str = "lock_source",
     audio_denoise_strength: float = 0.0,
     add_source_as_reference: bool = True,
-    strict_prompt_tags: bool = True,
     ref_image_size: str = "match",
+    ref_image_zoom: float = 1.0,
     drive_audio=None,
     final_audio=None,
     first_frame=None,
@@ -278,7 +292,13 @@ def build_conditioning(
     ref_videos=None,
     ref_video_audios=None,
     ref_audios=None,
+    guide_images=None,
 ):
+    """guide_images: [(image, frame_idx), ...] 中段引导图，按绝对像素帧号钉入。
+
+    与 first_frame/last_frame 走同一套 keyframe 机制（永不去噪、每步重注入），
+    所以单帧就够、不要求 17k+5 对齐。frame_idx 支持负数（从结尾倒数）。
+    """
     if width % 32 or height % 32:
         raise ValueError("MiniMax H3 width and height must be divisible by 32")
     if not 0.0 <= audio_denoise_strength <= 1.0:
@@ -339,13 +359,34 @@ def build_conditioning(
             "video_vae": video_vae,
         })
 
+    # 中段引导图：任意像素帧号锚一张图（单帧即可，无需网格对齐）
+    #
+    # 对齐官方 MiniMaxH3AddGuide 语义：引导帧只作为 minimax_keyframes 打包成
+    # 独立的 "cond" 段（靠 resolved_frame_index 定位），**不进入文本序列**、
+    # 不占用 <Picture n> 编号。首/尾帧是例外——官方 fl2va 里它们既进 cond 段
+    # 又进文本，所以它们才会出现在 keyframe_images 里。
+    for guide_index, (guide_image, raw_frame_idx) in enumerate(guide_images or (), 1):
+        if guide_image is None:
+            continue
+        resolved = int(raw_frame_idx or 0)
+        if resolved < 0:
+            resolved = frame_count + resolved
+        resolved = max(0, min(frame_count - 1, resolved))
+        image = resize_image(guide_image[:1], width, height, "center")
+        keyframes.append({
+            "resolved_frame_index": resolved,
+            "latent": video_vae.encode(image),
+            "source_image": guide_image[:1].detach().cpu(),
+            "video_vae": video_vae,
+        })
+
     real_ref_items: list[dict] = []
     real_ref_blocks: list[dict] = []
     video_labels: list[str] = []
     audio_labels: list[str] = []
 
     for image_ordinal, image in ref_image_entries:
-        resized, ref_width, ref_height = _resize_reference_image(image, width, height, ref_image_size)
+        resized, ref_width, ref_height = _resize_reference_image(image, width, height, ref_image_size, ref_image_zoom)
         encoded = video_vae.encode(resized)
         real_ref_items.append({"type": "image", "data": resized})
         real_ref_blocks.append(
@@ -362,7 +403,7 @@ def build_conditioning(
         if frames.ndim != 4 or frames.shape[0] < 5:
             raise ValueError(f"ref_video_{index} must contain at least 5 IMAGE frames")
         frames, canvas_width, canvas_height = _resize_reference_video(
-            frames, width, height, ref_image_size
+            frames, width, height, ref_image_size, ref_image_zoom
         )
         # Match the official H3 behavior: clip references that exceed the
         # generated-video window, but never extend a short reference by
@@ -439,7 +480,7 @@ def build_conditioning(
     conditioned_prompt, prompt_warnings = prepare_prompt(
         prompt,
         counts,
-        strict=strict_prompt_tags,
+        strict=False,
         task_type=resolved_task,
         valid_ordinals={
             "picture": picture_ordinals,

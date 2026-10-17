@@ -10,7 +10,8 @@ const RH_NODE_IDS = [
 ];
 const OPTIMIZER_ROUTE = "/blackrin/minimax-h3/prompt-optimizer";
 const WIDTH = 500;
-const PANEL_WIDTH = 476;
+// 面板宽度可调：默认 500，拖节点右边缘改变，存进工作流状态
+const clampWidth = value => Math.max(380, Math.min(1400, Math.round(Number(value) || WIDTH)));
 const INITIAL_NODE_HEIGHT = Math.round(WIDTH * 2 * 0.9);
 const MAX_RESTORED_NODE_HEIGHT = INITIAL_NODE_HEIGHT * 1.5;
 const MIN_NODE_HEIGHT = 0;
@@ -176,13 +177,37 @@ const DOM_TRANSLATIONS = {
     "Audio mode": "音频模式",
     "Audio denoise strength": "音频去噪强度",
     "Source audio as reference": "源音频作为参考",
-    "Strict prompt tags": "严格提示词标签",
-    "Reference image size": "参考素材尺寸",
+    "Reference image model": "参考图模型选择",
+    "Reference image zoom": "参考素材放大",
+    "match": "匹配",
+    "max": "最大值",
     "must not be below the first-stage megapixels": "不能低于一采百万像素",
     "Upscale stage": "开启二采",
     "Upscale megapixels": "二采百万像素",
     "Upscale size": "二采尺寸",
     "Prompt groups": "提示词组",
+    "Guide images": "引导图",
+    "Click to copy this label into the prompt": "点击复制该标签，可直接写进提示词",
+    "Copied": "已复制",
+    "Guide frame: a picture anchor, not a prompt label": "引导帧：画面锚点，不是提示词标签",
+    "Pick or drop an image first": "请先选择或拖入一张图片",
+    "Guide image: anchor a picture at a second inside this group": "引导图：在这一组的某一秒插一张图做引导",
+    "Click the guide button to add a picture anchor": "点右侧引导按钮，为这一刻加一张画面锚点",
+    "Insert position": "插入位置",
+    "Second (exact)": "秒数（精确）",
+    "What this image marks (optional)": "这张图代表什么（可选）",
+    "frame": "第",
+    "Add": "添加",
+    "Anchor a picture at a second inside this group; the model is guided to show it at that moment. Uses H3's keyframe mechanism, so one frame is enough.": "在这一组的某一秒锚一张图，模型会在那一刻把它画出来。走的是 H3 的原生 keyframe 机制，单帧即可、不要求帧数对齐。",
+    "No guide images yet": "还没有引导图",
+    "Upload an image on the node first": "请先在节点上上传一张图",
+    "Drop an image here or click to upload": "把图片拖到这里，或点击上传",
+    "Uploading": "上传中",
+    "Added": "已添加",
+    "Only image files are supported here": "这里只支持图片文件",
+    "Tip: keep the guide inside this group's own seconds; it is converted to that group's frame automatically.": "提示：秒数填在本组时长之内即可，会自动换算成该组的帧号。",
+    "Remove": "移除",
+    "Close": "关闭",
     "Continuity ON: pins the previous segment's tail at this segment's head": "接续开：把上一段的结尾钉进本段开头（剧情连续）",
     "Continuity OFF: fresh start (for scene cuts) — no pin": "接续关：本段全新开始（适合场景硬切），不钉入上一段",
     "Upscale conditioning source": "二采条件来源",
@@ -423,8 +448,24 @@ function normalizeIntWidget(node, name, fallback, minimum, maximum) {
     }
     return value;
 }
+function normalizeFloatWidget(node, name, fallback, minimum, maximum) {
+    const w = widget(node, name); if (!w) return fallback;
+    const parsed = Number(w.value);
+    const value = Number.isFinite(parsed)
+        ? Math.max(minimum, Math.min(maximum, parsed))
+        : fallback;
+    if (w.value !== value) {
+        w.value = value;
+        w.callback?.call(w, value);
+    }
+    return value;
+}
 function sanitizeHiddenInputs(node) {
     normalizeIntWidget(node, "drive_audio_ordinal", 1, 0, 6);
+    // This slot held the strict_prompt_tags boolean before it was replaced by
+    // the ref_image_scale float. An older graph replays True/False here, which
+    // coerces to 1/0 and clamps to 1.0 — the intended default either way.
+    normalizeFloatWidget(node, "ref_image_scale", 1.0, 1.0, 5.0);
     const task = widget(node, "task_type");
     if (task && !["auto", "t2va", "i2va", "l2va", "fl2va", "ref2va", "hybrid"].includes(task.value)) {
         task.value = "auto";
@@ -443,6 +484,20 @@ function showWidget(w) {
 function make(tag, css = {}, text = "") {
     const el = document.createElement(tag); Object.assign(el.style, css);
     if (text) el.textContent = text; return el;
+}
+/**
+ * 引导图按钮图标：外框（画面）+ 中心靶点（锚定）。
+ * 用内联 SVG 而不是 emoji——小尺寸下清晰、颜色跟随状态，且和 ⇄ ✂ ✕ 的线条风格一致。
+ */
+function guideIcon(color = "#5d7385", size = 13) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("width", String(size)); svg.setAttribute("height", String(size));
+    svg.style.cssText = `display:block;color:${color};transition:color .12s`;
+    svg.innerHTML =
+        `<rect x="1.7" y="3.2" width="12.6" height="9.6" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/>`
+        + `<circle cx="8" cy="8" r="2.4" fill="currentColor"/>`;
+    return svg;
 }
 function kindOf(file) {
     if (file.type?.startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name)) return "image";
@@ -474,7 +529,8 @@ function createPanel(node) {
     // briefly report a narrower DOM-widget wrapper. That transient width was
     // retained after the node returned to 500px, leaving the panel compressed
     // until a browser refresh or node rebuild.
-    const root = make("div", { position: "relative", width: `${PANEL_WIDTH}px`, minWidth: `${PANEL_WIDTH}px`, boxSizing: "border-box", color: "#d7e3ef", fontFamily: "Arial,sans-serif", fontSize: "12px", userSelect: "none", padding: "3px 0 2px", overflow: "visible" });
+    // 宽度跟随节点实际宽度（拖右边缘可调），不再钉死 476
+    const root = make("div", { position: "relative", width: "100%", boxSizing: "border-box", color: "#d7e3ef", fontFamily: "Arial,sans-serif", fontSize: "12px", userSelect: "none", padding: "3px 0 2px", overflow: "visible" });
     Object.assign(root.style, {
         display: "grid",
         // 显式行分配（各区块同时设 gridRow，勿靠 auto 推断）：
@@ -559,9 +615,11 @@ function createPanel(node) {
             prompt: prompt.value,
             prompts: { ...promptByMode },
             height: userHeight,
+            panelWidth: clampWidth(savedState.panelWidth),
             advanced: !!advanced?.open,
             audioModeByMode: { ...audioModeByMode },
             audioModeAutoByMode: { ...audioModeAutoByMode },
+            guides: savedState.guides,
             optimizer: optimizerSettings,
             optimizerCache,
             optimizerBefore,
@@ -583,18 +641,19 @@ function createPanel(node) {
     domWidget.options = domWidget.options || {}; domWidget.options.serialize = false;
     domWidget.options.getMinHeight = () => MIN_NODE_HEIGHT;
     domWidget.options.getHeight = () => "100%";
-    domWidget.options.minNodeSize = [WIDTH, 0];
+    // 面板宽度可调：拖节点右边缘改变宽度，宽度记进工作流（最小 380，最大 1400）
+    domWidget.options.minNodeSize = null;
     const baseComputeSize = node.computeSize.bind(node);
     node.computeSize = function(out) {
         const measured = baseComputeSize(out);
-        measured[0] = WIDTH;
+        measured[0] = clampWidth(savedState.panelWidth);
         return measured;
     };
     const promptWidget = widget(node, "prompt"); hideWidget(widget(node, "main_mode")); hideWidget(promptWidget);
     for (const name of [
         ...mediaSlots, "task_type", "audio_mode", "audio_denoise_strength",
         "drive_audio_ordinal",
-        "ref_image_size", "strict_prompt_tags", "gh_state_json",
+        "ref_image_size", "ref_image_scale", "gh_state_json",
     ]) hideWidget(widget(node, name));
     // Old graphs may contain the literal string "(none)" in this hidden Int
     // input. Clean it before ComfyUI serializes/submits the prompt.
@@ -1083,8 +1142,8 @@ function nodeColorToCss(value) {
     const driveAudioOrdinalControl = document.createElement("select");
     driveAudioOrdinalControl.className = "ghh3-control";
     addAdvanced("drive_audio_ordinal", t("Drive audio"), driveAudioOrdinalControl);
-    addAdvanced("strict_prompt_tags", t("Strict prompt tags"), check("strict_prompt_tags"));
-    addAdvanced("ref_image_size", t("Reference image size"), select("ref_image_size", ["match", "1.2x", "1.5x", "2x", "max"]));
+    addAdvanced("ref_image_size", t("Reference image model"), select("ref_image_size", ["match", "max"]));
+    addAdvanced("ref_image_scale", t("Reference image zoom"), number("ref_image_scale", "0.1", "1.0", "5.0"));
     // Second-stage sizing. The aspect always follows the first stage, so only
     // the target budget is exposed; the upscale node downstream reads the
     // emitted width/height. Disabling the second pass is done by bypassing
@@ -1254,8 +1313,8 @@ function nodeColorToCss(value) {
             driveAudioOrdinalControl.value = String(next);
         }
         const visible = state.mode === "text_keyframes"
-            ? ["audio_mode", "audio_denoise_strength", "strict_prompt_tags"]
-            : ["audio_mode", "audio_denoise_strength", "ref_image_size", "strict_prompt_tags", "drive_audio_ordinal"];
+            ? ["audio_mode", "audio_denoise_strength", "ref_image_size", "ref_image_scale"]
+            : ["audio_mode", "audio_denoise_strength", "ref_image_size", "ref_image_scale", "drive_audio_ordinal"];
         for (const [name, row] of advancedRows) {
             const isVisible = visible.includes(name);
             row.hidden = !isVisible;
@@ -1350,9 +1409,245 @@ function nodeColorToCss(value) {
         refreshUpscaleHint();
     };
     const tlHint = make("span", {}, t("drag block edge to set duration")); tlHint.style.cssText = "font-size:9px;color:#667887";
+    /** 某组的中段引导图编辑：选一张已上传的图 + 组内秒数（可多条）。 */
+    /** 引导图不占 <Picture n>（官方语义：只在 cond 段做画面锚点），所以没有标签可插入。 */
+    function openGuideEditor(groupIndex) {
+        const group = brGroups[groupIndex];
+        if (!group) return;
+        savedState.guides = savedState.guides && typeof savedState.guides === "object" ? savedState.guides : {};
+        if (!Array.isArray(savedState.guides[groupIndex])) savedState.guides[groupIndex] = [];
+        const guides = savedState.guides[groupIndex];
+        const groupSeconds = Number(group.duration) || 5;
+
+        const overlay = make("div"); overlay.className = "ghh3-opt-overlay";
+        const dialog = make("div"); dialog.className = "ghh3-opt-dialog";
+        const title = make("div", {}, `${t("Guide images")} · ${t("Prompt group")} ${groupIndex + 1}（${groupSeconds.toFixed(1)}s）`);
+        title.className = "ghh3-opt-title"; dialog.append(title);
+        const hint = make("div", {}, t("Anchor a picture at a second inside this group; the model is guided to show it at that moment. Uses H3's keyframe mechanism, so one frame is enough."));
+        hint.className = "ghh3-hint"; dialog.append(hint);
+
+        // 可选图源：当前节点的已上传素材（图/视频封面）
+        const available = [...media.entries()]
+            .filter(([, entry]) => entry?.kind === "image")
+            .map(([, entry]) => entry.name);
+
+        const listBox = make("div"); listBox.style.cssText = "display:grid;gap:6px;margin:8px 0";
+        dialog.append(listBox);
+        const renderList = () => {
+            listBox.replaceChildren();
+            if (!guides.length) {
+                const empty = make("div", {}, t("No guide images yet"));
+                empty.className = "ghh3-hint";
+                listBox.append(empty);
+                return;
+            }
+            guides.forEach((guide, gi) => {
+                const row = make("div");
+                row.style.cssText = "display:grid;grid-template-columns:auto minmax(0,1fr) 74px minmax(0,1.1fr) auto;gap:6px;align-items:center";
+                // 引导帧不占 <Picture n>，这里只标序号（画面锚点，非提示词标签）
+                const idxEl = make("div", {}, `#${gi + 1}`);
+                idxEl.style.cssText = "font:10px/1.6 Consolas,monospace;color:#8ea3b2;text-align:center;padding:1px 3px";
+                idxEl.title = t("Guide frame: a picture anchor, not a prompt label");
+                const nameEl = make("div", {}, String(guide.name || ""));
+                nameEl.style.cssText = "font-size:11px;color:#cfe0ea;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+                const secInput = make("input");
+                secInput.type = "number"; secInput.min = "0"; secInput.max = String(groupSeconds); secInput.step = "0.1";
+                secInput.value = String(Number(guide.seconds) || 0);
+                secInput.style.cssText = "width:74px;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
+                secInput.onchange = () => {
+                    guide.seconds = Math.max(0, Math.min(groupSeconds, Number(secInput.value) || 0));
+                    secInput.value = guide.seconds.toFixed(1);
+                    persistState();
+                };
+                // 用途说明：原样转给优化器，让 LLM 知道这张图在剧情里代表什么、
+                // 与其它引导图是什么关系（例如"起始造型"→"结尾造型"）。
+                const noteInput = make("input");
+                noteInput.type = "text";
+                noteInput.placeholder = t("What this image marks (optional)");
+                noteInput.value = String(guide.note || "");
+                noteInput.style.cssText = "width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
+                noteInput.onchange = () => {
+                    guide.note = noteInput.value.trim();
+                    persistState();
+                };
+                const del = make("button", {}, "×");
+                del.style.cssText = "border:0;background:transparent;color:#8fa3b3;font-size:13px;cursor:pointer";
+                del.title = t("Remove");
+                del.onclick = () => { guides.splice(gi, 1); persistState(); renderList(); renderGroups(); };
+                row.append(idxEl, nameEl, secInput, noteInput, del);
+                listBox.append(row);
+            });
+        };
+        renderList();
+
+        // 添加一条
+        const addRow = make("div");
+        addRow.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) auto;gap:6px;align-items:center;margin-top:4px";
+        const picker = make("select");
+        picker.style.cssText = "width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:5px;font:11px Arial,sans-serif";
+        if (available.length) {
+            available.forEach(name => picker.appendChild(new Option(name, name)));
+        } else {
+            picker.appendChild(new Option(t("Upload an image on the node first"), ""));
+        }
+        // 位置：粗略定位条（拖动选位置）+ 精确秒数输入，两者联动
+        let pendingSeconds = groupSeconds / 2;
+        const locWrap = make("div");
+        locWrap.style.cssText = "margin-top:8px;border:1px solid #2d4255;border-radius:7px;background:#101b26;padding:7px 9px";
+        const locHead = make("div");
+        locHead.style.cssText = "display:flex;align-items:baseline;gap:6px;margin-bottom:6px";
+        const locLabel = make("span", {}, t("Insert position"));
+        locLabel.style.cssText = "font-size:11px;color:#cfe0ea";
+        locHead.append(locLabel);
+        const locRead = make("span", {}, "");
+        locRead.style.cssText = "margin-left:auto;font-size:11px;color:#0aa4d6";
+        locHead.append(locRead);
+        locWrap.append(locHead);
+        // 轨道（整组时长 = 100%）
+        const locTrack = make("div");
+        locTrack.style.cssText = "position:relative;height:26px;border-radius:5px;background:linear-gradient(90deg,#162835,#1d3444);"
+            + "border:1px solid #2a3c49;cursor:pointer;touch-action:none";
+        const locFill = make("div");
+        locFill.style.cssText = "position:absolute;left:0;top:0;bottom:0;width:50%;border-radius:4px 0 0 4px;background:rgba(10,164,214,.22)";
+        const locKnob = make("div");
+        locKnob.style.cssText = "position:absolute;top:2px;bottom:2px;width:3px;margin-left:-1.5px;left:50%;"
+            + "background:#0aa4d6;box-shadow:0 0 6px rgba(10,164,214,.9);pointer-events:none";
+        locTrack.append(locFill, locKnob);
+        // 刻度：首/中/尾
+        [0, 0.25, 0.5, 0.75, 1].forEach(ratio => {
+            const tick = make("div");
+            tick.style.cssText = `position:absolute;top:0;bottom:0;left:${ratio * 100}%;width:1px;background:rgba(120,150,170,.22);pointer-events:none`;
+            locTrack.append(tick);
+        });
+        locWrap.append(locTrack);
+        const locScale = make("div");
+        locScale.style.cssText = "display:flex;justify-content:space-between;color:#5d7385;font:9px/1.6 Arial,sans-serif;margin-top:1px";
+        locScale.append(make("span", {}, "0s"), make("span", {}, `${groupSeconds.toFixed(1)}s`));
+        const locFrames = make("span", {}, "");
+        locScale.insertBefore(locFrames, locScale.lastChild);
+        locWrap.append(locScale);
+        // 精确秒数输入
+        const secRow = make("div");
+        secRow.style.cssText = "display:flex;align-items:center;gap:7px;margin-top:7px";
+        const secLabel = make("span", {}, t("Second (exact)"));
+        secLabel.style.cssText = "font-size:11px;color:#8ea3b2;white-space:nowrap";
+        secRow.append(secLabel);
+        const newSec = make("input");
+        newSec.type = "number"; newSec.min = "0"; newSec.max = String(groupSeconds); newSec.step = "0.1";
+        newSec.value = pendingSeconds.toFixed(1);
+        newSec.style.cssText = "width:84px;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
+        secRow.append(newSec);
+        locWrap.append(secRow);
+
+        const paintLoc = () => {
+            const ratio = groupSeconds > 0 ? Math.max(0, Math.min(1, pendingSeconds / groupSeconds)) : 0;
+            locFill.style.width = `${(ratio * 100).toFixed(2)}%`;
+            locKnob.style.left = `${(ratio * 100).toFixed(2)}%`;
+            const frame = Math.max(0, Math.round(pendingSeconds * 24));
+            locRead.textContent = `${pendingSeconds.toFixed(1)}s`;
+            locFrames.textContent = t("frame") + " " + frame;
+            if (document.activeElement !== newSec) newSec.value = pendingSeconds.toFixed(1);
+        };
+        locTrack.onpointerdown = event => {
+            event.stopPropagation();
+            event.preventDefault();
+            const rect = locTrack.getBoundingClientRect();
+            const apply = moveEvent => {
+                const ratio = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
+                pendingSeconds = Math.round(ratio * groupSeconds * 10) / 10;
+                paintLoc();
+            };
+            // 先落一次位置，再尝试捕获指针（合成事件没有真实指针，捕获会抛）
+            apply(event);
+            try { locTrack.setPointerCapture(event.pointerId); } catch {}
+            const up = () => {
+                locTrack.removeEventListener("pointermove", apply);
+                locTrack.removeEventListener("pointerup", up);
+            };
+            locTrack.addEventListener("pointermove", apply);
+            locTrack.addEventListener("pointerup", up);
+        };
+        newSec.oninput = () => {
+            pendingSeconds = Math.max(0, Math.min(groupSeconds, Number(newSec.value) || 0));
+            paintLoc();
+        };
+        paintLoc();
+        dialog.append(locWrap);
+
+        const newNote = make("input");
+        newNote.type = "text";
+        newNote.placeholder = t("What this image marks (optional)");
+        newNote.style.cssText = "width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
+
+        const addBtn = make("button", {}, t("Add"));
+        addBtn.className = "ghh3-opt-add";
+        addBtn.style.cssText = "margin-top:8px;border:0;border-radius:5px;background:#0aa4d6;color:#06131b;font:12px Arial,sans-serif;font-weight:600;padding:6px 16px;cursor:pointer";
+        addBtn.onclick = () => {
+            const name = picker.value;
+            if (!name) {
+                // 没有可选素材时不要静默失败：直接把上传入口高亮出来
+                drop.style.borderColor = "#0aa4d6";
+                status.textContent = t("Pick or drop an image first");
+                fileInput.click();
+                return;
+            }
+            guides.push({ name, seconds: pendingSeconds, note: newNote.value.trim() });
+            newNote.value = "";
+            persistState();
+            renderList();
+            renderGroups();
+        };
+        addRow.append(picker, newNote, addBtn);
+        dialog.append(addRow);
+        // 直接上传一张引导图（拖进来或点选），不用先扔到节点的素材槽
+        const drop = make("div");
+        drop.style.cssText = "margin-top:7px;border:1px dashed #2c5368;border-radius:6px;background:#101b26;color:#08b4ed;font-size:11px;padding:9px;text-align:center;cursor:pointer";
+        drop.textContent = t("Drop an image here or click to upload");
+        const fileInput = make("input");
+        fileInput.type = "file"; fileInput.accept = "image/*"; fileInput.style.display = "none";
+        const status = make("div", {}, "");
+        status.className = "ghh3-hint"; status.style.marginTop = "4px";
+        const addUploaded = async file => {
+            if (!file) return;
+            status.textContent = t("Uploading") + "…";
+            try {
+                const name = await uploadFile(file);
+                guides.push({ name, seconds: pendingSeconds, note: newNote.value.trim() });
+                newNote.value = "";
+                persistState();
+                renderList(); renderGroups();
+                status.textContent = t("Added") + ": " + name;
+            } catch (error) {
+                status.textContent = String(error?.message || error);
+            }
+        };
+        drop.onclick = () => fileInput.click();
+        fileInput.onchange = () => { addUploaded(fileInput.files?.[0]); fileInput.value = ""; };
+        drop.ondragover = event => { event.preventDefault(); event.stopPropagation(); drop.style.borderColor = "#0aa4d6"; };
+        drop.ondragleave = () => { drop.style.borderColor = "#2c5368"; };
+        drop.ondrop = event => {
+            event.preventDefault(); event.stopPropagation();
+            drop.style.borderColor = "#2c5368";
+            const file = event.dataTransfer?.files?.[0];
+            if (file && /^image\//.test(file.type || "")) addUploaded(file);
+            else status.textContent = t("Only image files are supported here");
+        };
+        dialog.append(drop, fileInput, status);
+        const note = make("div", {}, t("Tip: keep the guide inside this group's own seconds; it is converted to that group's frame automatically."));
+        note.className = "ghh3-hint"; note.style.marginTop = "6px"; dialog.append(note);
+
+        const actions = make("div"); actions.className = "ghh3-opt-actions";
+        const close = make("button", {}, t("Close"));
+        close.onclick = () => overlay.remove();
+        actions.append(close); dialog.append(actions);
+        overlay.append(dialog);
+        overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
+        document.body.appendChild(overlay);
+    }
+
     const tlAdd = make("button", {}, t("+ Add group")); tlAdd.style.cssText = "border:1px dashed #2c5368;border-radius:6px;background:#101b26;color:#08b4ed;font-size:11px;padding:3px 10px;cursor:pointer";
     tlBar.append(tlTitle, upscaleModeSel, upscaleHint, tlHint, tlAdd);
-    const tlStrip = make("div"); tlStrip.style.cssText = "display:flex;flex-wrap:wrap;gap:3px;min-width:0;padding:2px 0";
+    const tlStrip = make("div"); tlStrip.style.cssText = "display:flex;flex-direction:column;gap:2px;min-width:0;padding:0";
     timelineWrap.append(tlBar, tlStrip);
     const alignFrames = n => { n = Math.max(5, Math.round(n)); return n + (((5 - n) % 17) + 17) % 17; };
     const groupFrames = g => alignFrames((Number(g.duration) || 5) * 24);
@@ -1384,12 +1679,11 @@ function nodeColorToCss(value) {
             const el = tlStrip.children[index];
             if (!el) return;
             const frames = groupFrames(group);
-            el.style.flexGrow = String(Number(group.duration) || 5);
             const info = el.querySelector(".ghh3-tl-info");
             if (info) {
-                info.textContent = `${(Number(group.duration) || 5).toFixed(1)}s · ${startFrame}-${startFrame + frames - 1}`;
+                info.textContent = `${startFrame}-${startFrame + frames - 1} 帧`;
                 const over = frames > 362;
-                info.style.color = over ? "#e0715a" : "#8697a7";
+                info.style.color = over ? "#e0715a" : "#7d93a2";
                 info.title = over ? t("Over H3 training limit (362 frames ≈ 15s at 24fps); quality may degrade") : "";
             }
             startFrame += frames;
@@ -1403,14 +1697,19 @@ function nodeColorToCss(value) {
             const frames = groupFrames(group);
             const active = index === brActive;
             const block = make("div");
-            // flex-basis 定在最小可用宽度上：组多了自动换行，行内按时长分配剩余宽度
-            block.style.cssText = `position:relative;flex:${Number(group.duration) || 5} 1 86px;min-width:86px;height:52px;border-radius:6px;border:1px solid ${active ? "#0aa4d6" : "#334a5d"};background:${active ? "#16303f" : "#182633"};color:#dce7ee;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;user-select:none`;
-            const name = make("div", {}, t("Prompt group") + " " + (index + 1));
-            name.style.cssText = "font-size:10px;font-weight:600;pointer-events:none";
-            const info = make("div", {}, `${(Number(group.duration) || 5).toFixed(1)}s · ${startFrame}-${startFrame + frames - 1}`);
-            info.className = "ghh3-tl-info";
-            info.style.cssText = `font-size:8px;${frames > 362 ? "color:#e0715a;" : "color:#8697a7;"}margin-top:2px;pointer-events:none`;
-            if (frames > 362) info.title = t("Over H3 training limit (362 frames ≈ 15s at 24fps); quality may degrade");
+            // 一列一行：每行铺满容器宽度，左侧信息 / 中间引导轨 / 右侧操作
+            const accent = active ? "#0aa4d6" : "#334a5d";
+            block.style.cssText = "position:relative;width:100%;box-sizing:border-box;height:44px;"
+                + `border-radius:7px;border:1px solid ${accent};`
+                + `background:linear-gradient(90deg,${active ? "#1a3546" : "#182633"} 0%,${active ? "#132531" : "#131f2a"} 100%);`
+                + "color:#dce7ee;display:grid;grid-template-columns:158px minmax(0,1fr) 64px;"
+                + "align-items:center;gap:9px;padding:0 6px;cursor:pointer;overflow:hidden;user-select:none;margin-bottom:2px;"
+                + (active ? "box-shadow:0 0 0 1px rgba(10,164,214,.35)" : "");
+            // 左：序号 + 时长输入
+            const left = make("div");
+            left.style.cssText = "display:flex;align-items:center;gap:5px;min-width:0";
+            const name = make("span", {}, `${t("Prompt group")} ${index + 1}`);
+            name.style.cssText = "font-size:11px;font-weight:600;white-space:nowrap";
             const durationInput = make("input");
             durationInput.type = "number";
             durationInput.min = "1";
@@ -1419,18 +1718,108 @@ function nodeColorToCss(value) {
             durationInput.value = (Number(group.duration) || 5).toFixed(1);
             durationInput.title = t("Seconds for this group");
             durationInput.className = "ghh3-tl-frames";
-            durationInput.style.cssText = "width:52px;margin-top:2px;padding:1px 3px;border:1px solid #354b5d;border-radius:4px;background:#101b26;color:#9fd8ef;font:9px/1.4 Arial,sans-serif;text-align:center;pointer-events:auto";
+            durationInput.style.cssText = "width:48px;padding:1px 2px;border:1px solid #354b5d;border-radius:4px;"
+                + "background:#0d1820;color:#9fd8ef;font:10px/1.4 Arial,sans-serif;text-align:center;pointer-events:auto";
             durationInput.onclick = (event) => event.stopPropagation();
             durationInput.onchange = () => {
                 group.duration = Math.min(30, Math.max(1, Math.round((Number(durationInput.value) || 5) * 10) / 10));
                 durationInput.value = (Number(group.duration) || 5).toFixed(1);
                 saveGroups(); refreshStripLayout();
             };
-            block.append(name, durationInput, info);
+            left.append(name, durationInput);
+            block.append(left);
+            // 中：帧范围 + PR 式引导轨（同一行内，缩略图按秒数比例摆放）
+            const mid = make("div");
+            mid.style.cssText = "position:relative;height:100%;min-width:0";
+            const info = make("div", {}, `${startFrame}-${startFrame + frames - 1} 帧`);
+            info.className = "ghh3-tl-info";
+            info.style.cssText = `position:absolute;left:2px;top:2px;font-size:9px;${frames > 362 ? "color:#e0715a;" : "color:#7d93a2;"}pointer-events:none;z-index:3`;
+            if (frames > 362) info.title = t("Over H3 training limit (362 frames ≈ 15s at 24fps); quality may degrade");
+            mid.append(info);
+            // 中段引导图：给这一组在某个秒数插一张图引导（对应官方 Add Guide 的 keyframe 机制）
+            const guides = (() => {
+                savedState.guides = savedState.guides && typeof savedState.guides === "object" ? savedState.guides : {};
+                const list = savedState.guides[index];
+                if (!Array.isArray(list)) savedState.guides[index] = [];
+                return savedState.guides[index];
+            })();
+            const track = make("div");
+            track.className = "ghh3-guide-track";
+            track.style.cssText = "position:absolute;left:0;right:0;bottom:3px;top:17px;border-radius:4px;"
+                + "background:rgba(8,16,24,.42);border:1px solid #1f2f3a";
+            const groupSecs = Number(group.duration) || 5;
+            guides.forEach((guide, gi) => {
+                const ratio = Math.max(0, Math.min(1, (Number(guide.seconds) || 0) / groupSecs));
+                const chip = make("div");
+                chip.className = "ghh3-guide-chip";
+                chip.style.cssText = `position:absolute;top:1px;bottom:1px;width:20px;margin-left:-10px;left:${(ratio * 100).toFixed(2)}%;`
+                    + "border-radius:3px;border:1px solid #23c6ea;box-shadow:0 1px 3px rgba(0,0,0,.5);"
+                    + "background:#0d1b24 center/cover no-repeat;z-index:2;cursor:ew-resize;pointer-events:auto";
+                chip.style.backgroundImage = `url("${fileUrl(guide.name)}")`;
+                chip.title = `${guide.name} · ${(Number(guide.seconds) || 0).toFixed(1)}s`;
+                // 引导帧只做画面锚点（cond 段），不进提示词，所以角上标序号而非 <Picture n>
+                const badge = make("span", {}, String(gi + 1));
+                badge.style.cssText = "position:absolute;right:-3px;top:-4px;min-width:11px;height:11px;line-height:11px;"
+                    + "text-align:center;border-radius:6px;background:#3f6f88;color:#eaf6ff;"
+                    + "font:bold 8px/11px Arial,sans-serif;padding:0 2px;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.6)";
+                chip.appendChild(badge);
+                chip.onclick = event => event.stopPropagation();
+                // 在轨道上拖动 = 改这一条的秒数
+                chip.onpointerdown = event => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    const rect = track.getBoundingClientRect();
+                    const move = moveEvent => {
+                        const next = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
+                        guide.seconds = Math.round(next * groupSecs * 10) / 10;
+                        chip.style.left = `${(next * 100).toFixed(2)}%`;
+                        chip.title = `${guide.name} · ${guide.seconds.toFixed(1)}s`;
+                    };
+                    move(event);
+                    try { chip.setPointerCapture(event.pointerId); } catch {}
+                    const up = () => {
+                        chip.removeEventListener("pointermove", move);
+                        chip.removeEventListener("pointerup", up);
+                        persistState();
+                        renderGroups();
+                    };
+                    chip.addEventListener("pointermove", move);
+                    chip.addEventListener("pointerup", up);
+                };
+                track.appendChild(chip);
+            });
+            if (!guides.length) {
+                const hint = make("div", {}, t("Click the guide button to add a picture anchor"));
+                hint.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;"
+                    + "color:#3f5361;font:8px/1 Arial,sans-serif;pointer-events:none;letter-spacing:.2px";
+                track.appendChild(hint);
+            }
+            mid.appendChild(track);
+            block.append(mid);
+            // 右：操作列（加引导图 / 接续开关 / 删除）
+            const ops = make("div");
+            ops.style.cssText = "display:flex;align-items:center;justify-content:flex-end;gap:3px";
+            const guideBtn = make("button");
+            guideBtn.style.cssText = "border:0;background:transparent;display:flex;align-items:center;gap:3px;"
+                + `color:${guides.length ? "#0aa4d6" : "#5d7385"};font:10px/1 Arial,sans-serif;cursor:pointer;padding:2px 4px;border-radius:3px`;
+            guideBtn.appendChild(guideIcon(guides.length ? "#0aa4d6" : "#5d7385", 14));
+            if (guides.length) {
+                const count = make("span", {}, String(guides.length));
+                count.style.cssText = "font:bold 9px/1 Arial,sans-serif";
+                guideBtn.appendChild(count);
+            }
+            guideBtn.title = t("Guide image: anchor a picture at a second inside this group");
+            guideBtn.onmouseenter = () => { guideBtn.style.background = "rgba(10,164,214,.14)"; };
+            guideBtn.onmouseleave = () => { guideBtn.style.background = "transparent"; };
+            guideBtn.onclick = (event) => {
+                event.stopPropagation();
+                openGuideEditor(index);
+            };
+            ops.appendChild(guideBtn);
             if (index > 0) {
                 const contOn = group.cont !== false;
                 const contBtn = make("button", {}, contOn ? "⇄" : "✂");
-                contBtn.style.cssText = `position:absolute;left:1px;top:1px;border:0;background:transparent;color:${contOn ? "#5aa7d6" : "#c47f2e"};font:10px/1 Arial,sans-serif;cursor:pointer;z-index:2;padding:1px 2px`;
+                contBtn.style.cssText = `border:0;background:transparent;color:${contOn ? "#5aa7d6" : "#c47f2e"};font:11px/1 Arial,sans-serif;cursor:pointer;padding:2px 3px;border-radius:3px`;
                 contBtn.title = contOn
                     ? t("Continuity ON: pins the previous segment's tail at this segment's head")
                     : t("Continuity OFF: fresh start (for scene cuts) — no pin");
@@ -1439,11 +1828,13 @@ function nodeColorToCss(value) {
                     group.cont = contOn ? false : true;
                     saveGroups(); renderGroups();
                 };
-                block.appendChild(contBtn);
+                ops.appendChild(contBtn);
             }
             if (brGroups.length > 1) {
-                const remove = make("button", {}, "×");
-                remove.style.cssText = "position:absolute;right:1px;top:1px;border:0;background:transparent;color:#8fa3b3;font-size:11px;cursor:pointer;z-index:2";
+                const remove = make("button", {}, "✕");
+                remove.style.cssText = "border:0;background:transparent;color:#6f8494;font-size:11px;line-height:1;cursor:pointer;padding:2px 3px;border-radius:3px";
+                remove.onmouseenter = () => { remove.style.color = "#e0715a"; remove.style.background = "rgba(224,113,90,.12)"; };
+                remove.onmouseleave = () => { remove.style.color = "#6f8494"; remove.style.background = "transparent"; };
                 remove.onclick = (event) => {
                     event.stopPropagation();
                     brGroups.splice(index, 1);
@@ -1452,8 +1843,9 @@ function nodeColorToCss(value) {
                     if (brActive >= 0 && brActive < brGroups.length) loadGroupIntoEditor(brGroups[brActive].prompt);
                     saveGroups(); renderGroups();
                 };
-                block.appendChild(remove);
+                ops.appendChild(remove);
             }
+            block.append(ops);
             block.onclick = () => {
                 if (brActive === index) return;
                 // 切走前：编辑器当前内容（含粘贴）存回当前激活组
@@ -1465,30 +1857,6 @@ function nodeColorToCss(value) {
                 resetPrompt.classList.toggle("visible", !!brGroups[index].optimizer_before && !upstreamConnected());
                 saveGroups(); renderGroups();
             };
-            const handle = make("div");
-            handle.style.cssText = "position:absolute;right:-2px;top:0;bottom:0;width:7px;cursor:ew-resize;z-index:3";
-            handle.title = t("Drag to set duration");
-            handle.onpointerdown = (event) => {
-                event.stopPropagation();
-                event.preventDefault();
-                handle.setPointerCapture(event.pointerId);
-                const startX = event.clientX;
-                const startDuration = Number(group.duration) || 5;
-                const onMove = (moveEvent) => {
-                    group.duration = Math.min(30, Math.max(2, Math.round((startDuration + (moveEvent.clientX - startX) * 0.05) * 10) / 10));
-                    const input = block.querySelector("input");
-                    if (input) input.value = (Number(group.duration) || 5).toFixed(1);
-                    saveGroups(); refreshStripLayout();
-                };
-                const onUp = () => {
-                    handle.removeEventListener("pointermove", onMove);
-                    handle.removeEventListener("pointerup", onUp);
-                    renderGroups();
-                };
-                handle.addEventListener("pointermove", onMove);
-                handle.addEventListener("pointerup", onUp);
-            };
-            block.appendChild(handle);
             tlStrip.appendChild(block);
             startFrame += frames;
         });
@@ -1721,8 +2089,9 @@ function nodeColorToCss(value) {
                 ? Math.max(0, Math.ceil(numericHeight))
                 : userHeight;
             userHeight = nextHeight;
-            if (writeNode && (node.size?.[0] !== WIDTH || node.size?.[1] !== nextHeight)) {
-                node.setSize([WIDTH, nextHeight]);
+            const nextWidth = clampWidth(savedState.panelWidth);
+            if (writeNode && (node.size?.[0] !== nextWidth || node.size?.[1] !== nextHeight)) {
+                node.setSize([nextWidth, nextHeight]);
             }
             root.style.height = "100%";
             // The rich editor is absolutely bounded by promptWrap. Keeping an
@@ -1737,7 +2106,11 @@ function nodeColorToCss(value) {
     const previousOnResize = node.onResize;
     node.onResize = function(...args) {
         const nextHeight = Number(this.size?.[1]);
-        if (this.size?.[0] !== WIDTH) this.size[0] = WIDTH;
+        const nextWidth = Number(this.size?.[0]);
+        // 宽度可调：记住用户拖到的宽度（限制在 380~1400），不再强行改回 500
+        if (Number.isFinite(nextWidth) && nextWidth !== clampWidth(savedState.panelWidth)) {
+            savedState.panelWidth = clampWidth(nextWidth);
+        }
         // 原生控件行 + 面板五行内容的最小高度；低于它 DOM 会溢出节点边框
         if (Number.isFinite(nextHeight) && nextHeight < 720) this.size[1] = 720;
         previousOnResize?.apply(this, args);
@@ -2513,13 +2886,53 @@ function nodeColorToCss(value) {
             video.onerror = () => reject(new Error("Unable to read reference video")); video.src = url;
         });
     }
+    /** 引导图条目按「引导槽位」命名，实际文件存在 savedState.guides 里，不在 media 中。 */
+    const GUIDE_SLOT = /^guide_(\d+)_(\d+)$/;
+    function guideEntryFromSlot(slot) {
+        const match = GUIDE_SLOT.exec(String(slot || ""));
+        if (!match) return null;
+        const list = savedState.guides?.[Number(match[1])];
+        if (!Array.isArray(list)) return null;
+        const guide = list[Number(match[2])];
+        return guide && guide.name ? { name: guide.name, kind: "image", seconds: Number(guide.seconds) || 0 } : null;
+    }
+    /**
+     * 引导图列表（只用于优化器和时间条展示）。
+     *
+     * 对齐官方 MiniMaxH3AddGuide：引导帧只作为 minimax_keyframes 的 cond 段锚点，
+     * **不进入文本序列、不占用 <Picture n>**——所以这里不给它们分配图片编号，
+     * 参考图仍从 <Picture 1> 开始。
+     */
+    function activeGuideSpecs() {
+        return (savedState.guides?.[brActive] || [])
+            .map((guide, index) => ({ guide, index }))
+            .filter(item => item.guide?.name)
+            .map(item => ({
+                slot: `guide_${brActive}_${item.index}`,
+                kind: "image",
+                label: `guide frame ${item.index + 1}`,
+                seconds: Number(item.guide.seconds) || 0,
+                note: String(item.guide.note || "").trim(),
+            }));
+    }
     function optimizerMediaSpecs() {
         const specs = [];
+        // 引导图要发给优化器"看"（VLM 认图），但不占 <Picture n>：
+        // label 用描述性名称，避免 LLM 把不存在的标签写进最终提示词。
+        const pushGuides = () => {
+            activeGuideSpecs().forEach(spec => specs.push({
+                slot: spec.slot,
+                kind: "image",
+                label: spec.label,
+                guideSeconds: spec.seconds,
+            }));
+        };
         if (state.mode === "text_keyframes") {
             const task = resolvedTaskType();
             const frames = ["first_frame", "last_frame"].filter(slot => media.has(slot));
             frames.forEach((slot, index) => specs.push({ slot, kind: "image", label: task === "FL2VA" ? `picture ${index + 1}` : `<picture ${index + 1}>` }));
             if (media.has("hybrid_audio")) specs.push({ slot: "hybrid_audio", kind: "audio", label: "<audio 1>" });
+            pushGuides();
             return specs;
         }
         const images = [...media.entries()].filter(([slot, entry]) => slot.startsWith("ref_image_") && entry?.kind === "image").sort((a,b) => a[0].localeCompare(b[0]));
@@ -2530,6 +2943,7 @@ function nodeColorToCss(value) {
         let audioOrdinal = 1;
         videos.forEach(([slot, entry]) => { if (!entry.muted) specs.push({ slot, kind: "audio", label: `<audio ${audioOrdinal++}>`, labelOnly: true }); });
         audios.forEach(([slot]) => specs.push({ slot, kind: "audio", label: `<audio ${audioOrdinal++}>` }));
+        pushGuides();
         return specs;
     }
     async function optimizerMediaPayload(specs) {
@@ -2538,9 +2952,12 @@ function nodeColorToCss(value) {
         let runninghubImages = 0;
         let runninghubVideo = false;
         for (const spec of specs) {
-            const entry = media.get(spec.slot);
+            const entry = media.get(spec.slot) || guideEntryFromSlot(spec.slot);
             if (!entry) continue;
             const item = { kind: spec.kind, label: spec.label, labelOnly: !!spec.labelOnly };
+            // 引导图额外带时间点：后端要告诉 LLM"这张图锚在第几秒"
+            if (Number.isFinite(spec.guideSeconds)) item.guide_seconds = spec.guideSeconds;
+            if (spec.note) item.guide_note = spec.note;
             if (optimizerSettings?.read_media !== false && spec.kind === "image") {
                 if (!runninghub || runninghubImages < 8) item.images = [await lowImageData(fileUrl(entry.name))];
                 runninghubImages++;
@@ -2556,7 +2973,14 @@ function nodeColorToCss(value) {
         return payload;
     }
     function optimizerContextSignature(specs, mode = state.mode, task = resolvedTaskType(), duration = Number(durationWidget?.value || 5), context = optimizerTaskContext(specs, mode)) {
-        return JSON.stringify({ task, duration, mode, context, media: specs.map(spec => [spec.slot, spec.kind, spec.label, media.get(spec.slot)?.name || "", !!media.get(spec.slot)?.muted]), settings: optimizerSettings && [optimizerSettings.mode, optimizerSettings.provider, optimizerSettings.assistant_service, optimizerSettings.rule, optimizerSettings.api_url, optimizerSettings.model, optimizerSettings.protocol, optimizerSettings.local_model, optimizerSettings.local_mmproj, optimizerSettings.local_device, optimizerSettings.read_media, optimizerSettings.output_language] });
+        return JSON.stringify({
+            group: brActive,
+            task, duration, mode, context,
+            // 引导图参与签名：换了图、挪了秒数或改了用途都必须重算，不能吃旧缓存
+            guides: (savedState.guides?.[brActive] || []).map(g => [g?.name || "", Number(g?.seconds) || 0, String(g?.note || "")]),
+            media: specs.map(spec => [spec.slot, spec.kind, spec.label, (media.get(spec.slot) || guideEntryFromSlot(spec.slot))?.name || "", !!media.get(spec.slot)?.muted]),
+            settings: optimizerSettings && [optimizerSettings.mode, optimizerSettings.provider, optimizerSettings.assistant_service, optimizerSettings.rule, optimizerSettings.api_url, optimizerSettings.model, optimizerSettings.protocol, optimizerSettings.local_model, optimizerSettings.local_mmproj, optimizerSettings.local_device, optimizerSettings.read_media, optimizerSettings.output_language],
+        });
     }
     function optimizerTaskContext(specs, mode = state.mode, audioMode = widget(node, "audio_mode")?.value || "native") {
         const keyframes = specs
@@ -2565,9 +2989,17 @@ function nodeColorToCss(value) {
                 label: spec.label,
                 role: spec.slot === "first_frame" ? "exact_first_frame" : "exact_last_frame",
             }));
+        // 中段引导图：告诉优化器"第几秒会锚定哪张图"。它们不是提示词标签（官方语义里
+        // 引导帧不进文本），所以只提供时间点，让模型用文字描述那个时刻的画面。
+        const guides = activeGuideSpecs().map(spec => ({
+            label: spec.label,
+            at_seconds: spec.seconds,
+            note: spec.note || "",
+        }));
         return {
             main_mode: mode,
             keyframes,
+            mid_guide_images: guides,
             audio_mode: audioMode,
         };
     }
@@ -3705,7 +4137,7 @@ function nodeColorToCss(value) {
             for (const n of [
                 "main_mode", "prompt", "task_type", ...mediaSlots,
                 "audio_mode", "audio_denoise_strength",
-                "drive_audio_ordinal", "ref_image_size", "strict_prompt_tags",
+                "drive_audio_ordinal", "ref_image_size", "ref_image_scale",
                 "gh_state_json",
             ]) hideWidget(widget(node,n));
             normalizeIntWidget(node, "drive_audio_ordinal", 1, 0, 6);
@@ -3753,6 +4185,12 @@ function nodeColorToCss(value) {
                 optimizerSettings = restored.optimizer || optimizerSettings;
                 refreshOptimizerName(); refreshPromptConnection();
                 optimizerCache = restored.optimizerCache || null;
+                // 引导图必须一起还原：否则刷新后前端状态为空，下一次 persist 会把
+                // 空 guides 写回 widget，把已存的引导图抹掉（数据丢失）
+                if (restored.guides && typeof restored.guides === "object") {
+                    savedState.guides = restored.guides;
+                    renderGroups();
+                }
                 if (restored.audioModeByMode && typeof restored.audioModeByMode === "object") {
                     for (const mode of ["text_keyframes", "all_reference"]) {
                         delete audioModeByMode[mode];
@@ -3875,7 +4313,10 @@ function nodeColorToCss(value) {
             userHeight = Math.max(0, Number(savedState.height));
         }
         advanced.open = !!savedState.advanced;
-        if (node.size?.[0] !== WIDTH || node.size?.[1] !== userHeight) node.setSize([WIDTH, userHeight]);
+        const restoreWidth = clampWidth(savedState.panelWidth);
+        if (node.size?.[0] !== restoreWidth || node.size?.[1] !== userHeight) {
+            node.setSize([restoreWidth, userHeight]);
+        }
         syncLayout(userHeight, true);
         refreshPromptConnection();
         if (initialRestoreEpoch === restoreEpoch) {

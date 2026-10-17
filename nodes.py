@@ -23,6 +23,11 @@ from . import blackrin_config
 # 本地 API 调用一律绕过系统代理（避免 127.0.0.1 请求被代理拦截）
 _NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
+# 图片反推的输出预算：推理型模型会先花几千 token 在思考上，配置里的 4096
+# 常常在思考阶段就被吃光、最终答案为空。低于下限时抬到下限，仍为空则翻倍重试。
+MIN_RESULT_TOKENS = 16384
+MAX_RESULT_TOKENS = 65536
+
 # ROCm 全局补丁
 if not hasattr(torch.backends.cuda, "matmul"):
     class _FM: allow_fp16_accumulation = False
@@ -316,23 +321,61 @@ class BlackRin_ImageCaption:
                 for i, b64 in enumerate(image_b64_list):
                     content.append({"type": "image_url", "image_url": {"url": b64}})
                 print(f"[图片反推] {n}张图→{tm.get('name','')}")
-                payload = {
-                    "model": tm.get("name", ""),
-                    "messages": [{"role": "user", "content": content}],
-                    "temperature": tm.get("temperature", 0.7),
-                    "max_tokens": tm.get("max_tokens", 1000),
-                    "top_p": tm.get("top_p", 0.9),
-                }
-                hdrs = {"Authorization": f"Bearer {ak}"} if ak else {}
-                with httpx.Client(timeout=300.0, trust_env=False) as c:
-                    r = c.post(au, json=payload, headers=hdrs)
+
+                # 推理型模型（deepseek / sensenova / glm 等）会先花几千到上万 token 在
+                # 思考上，配置里常见的 4096 往往在思考阶段就耗尽、content 为空。
+                # 这里保证一个足以"思考完还能写完答案"的下限，并按需翻倍重试；
+                # 但返回值永远只取 content（最终答案），绝不把思考当结果。
+                configured = int(tm.get("max_tokens") or 1000)
+                budget = max(configured, MIN_RESULT_TOKENS)
+                thinking_fields = {"enable_thinking": False, "chat_template_kwargs": {"enable_thinking": False}}
+                while True:
+                    payload = {
+                        "model": tm.get("name", ""),
+                        "messages": [{"role": "user", "content": content}],
+                        "temperature": tm.get("temperature", 0.7),
+                        "max_tokens": budget,
+                        "top_p": tm.get("top_p", 0.9),
+                        **thinking_fields,
+                    }
+                    hdrs = {"Authorization": f"Bearer {ak}"} if ak else {}
+                    with httpx.Client(timeout=600.0, trust_env=False) as c:
+                        r = c.post(au, json=payload, headers=hdrs)
+                    if r.status_code == 400:
+                        detail = r.text[:200]
+                        # 有些服务端不认关闭思考的字段，去掉后重试一次
+                        if thinking_fields:
+                            thinking_fields = {}
+                            continue
+                        # 有些服务端限制 max_tokens 上限，逐步退让
+                        if budget > configured:
+                            budget = max(configured, budget // 2)
+                            continue
+                        raise RuntimeError(f"API 拒绝请求（HTTP 400）：{detail}")
                     r.raise_for_status()
                     j = r.json()
-                ct = j.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                if not ct:
-                    raise RuntimeError("API 返回空结果")
-                print(f"[图片反推] {ct[:80]}...")
-                return ct
+
+                    choice = (j.get("choices") or [{}])[0]
+                    message = choice.get("message") or {}
+                    ct = (message.get("content") or "").strip()
+                    if ct:
+                        print(f"[图片反推] {ct[:80]}...")
+                        return ct
+
+                    # content 为空：多半是思考吃光了预算。翻倍再来，仍为空才报错。
+                    reasoning = (message.get("reasoning_content") or message.get("reasoning") or "").strip()
+                    finish_reason = choice.get("finish_reason") or "unknown"
+                    if reasoning and finish_reason == "length" and budget < MAX_RESULT_TOKENS:
+                        budget = min(budget * 2, MAX_RESULT_TOKENS)
+                        print(f"[图片反推] 思考占满输出预算，提升 max_tokens 至 {budget} 重试…")
+                        continue
+                    if reasoning:
+                        raise RuntimeError(
+                            "模型只返回了思考内容、没有最终答案"
+                            f"（finish_reason={finish_reason}，已给 {budget} tokens、思考 {len(reasoning)} 字）。"
+                            "请降低该规则的长度，或换一个非推理型模型。"
+                        )
+                    raise RuntimeError(f"API 返回空结果（finish_reason={finish_reason}）")
 
             # 只取第一张图的 batch 帧（多图时不支持每张图都 batch，太复杂）
             # 思路：image_1 的 batch 帧 → 多次调用，每帧 + 其他所有固定图

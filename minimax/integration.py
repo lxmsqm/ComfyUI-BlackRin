@@ -74,10 +74,6 @@ def _hidden_combo(name, options, default=None):
     )
 
 
-def _hidden_boolean(name, default):
-    return io.Boolean.Input(name, default=default, extra_dict={"hidden": True})
-
-
 def _hidden_float(name, default, minimum, maximum, step, round_value=None):
     return io.Float.Input(
         name,
@@ -114,6 +110,22 @@ def _coerce_int(value, default=0, minimum=None, maximum=None):
         result = max(int(minimum), result)
     if maximum is not None:
         result = min(int(maximum), result)
+    return result
+
+
+def _coerce_float(value, default=0.0, minimum=None, maximum=None):
+    """Accept legacy serialized widget values without leaking them downstream."""
+    if value is None or value == "" or value == "(none)":
+        result = float(default)
+    else:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            result = float(default)
+    if minimum is not None:
+        result = max(float(minimum), result)
+    if maximum is not None:
+        result = min(float(maximum), result)
     return result
 
 
@@ -511,8 +523,13 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                 _hidden_float("audio_denoise_strength", 0.0, 0.0, 1.0, 0.01, 0.01),
                 # Match T8: 1 selects the first audio; 0 disables remapping.
                 _hidden_int("drive_audio_ordinal", 1, 0, 6),
-                _hidden_boolean("strict_prompt_tags", True),
-                _hidden_combo("ref_image_size", ["match", "1.2x", "1.5x", "2x", "max"], "match"),
+                # JZL's ref_scale: a pixel-area multiplier for reference media.
+                # 1.0 keeps the official "never enlarge" behaviour; above 1.0
+                # reference images/videos are upscaled before VAE encoding.
+                _hidden_float("ref_image_scale", 1.0, 1.0, 5.0, 0.1),
+                # match scales references to the generation canvas area; max
+                # pins the short edge at 2048 regardless of the canvas.
+                _hidden_combo("ref_image_size", ["match", "max"], "match"),
                 # Keep this last so adding persistence does not shift legacy
                 # widgets_values positions for any existing input.
                 io.String.Input("gh_state_json", default="", optional=True, extra_dict={"hidden": True}),
@@ -558,13 +575,17 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                 ref_image_4, ref_image_5, ref_image_6, ref_image_7, ref_image_8, ref_image_9,
                 ref_video_1, ref_video_2, ref_video_3, ref_audio_1, ref_audio_2, ref_audio_3,
                 task_type, audio_mode, audio_denoise_strength,
-                drive_audio_ordinal, strict_prompt_tags, ref_image_size,
+                drive_audio_ordinal, ref_image_scale, ref_image_size,
                 gh_state_json="", prompt_override=None,
                 upscale_megapixels=1.0, segments_json=""):
         # ComfyUI can replay an older hidden-widget snapshot as the literal
         # string "(none)". T8 treats this control as an int, with 0 disabling
         # remapping, so normalize it before calling the shared conditioning.
         drive_audio_ordinal = _coerce_int(drive_audio_ordinal, default=1, minimum=0, maximum=6)
+        # This slot held the strict_prompt_tags boolean before ref_image_scale
+        # replaced it. True/False coerce to 1.0 either way, so old graphs keep
+        # the default behaviour instead of silently zooming references.
+        ref_image_scale = _coerce_float(ref_image_scale, default=1.0, minimum=1.0, maximum=5.0)
         media_values = {
             "first_frame": first_frame, "last_frame": last_frame, "hybrid_audio": hybrid_audio,
             "ref_image_1": ref_image_1, "ref_image_2": ref_image_2, "ref_image_3": ref_image_3,
@@ -805,6 +826,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                     except (TypeError, ValueError):
                         gh_state = {}
                     fps = max(1, int(gh_state.get("fps") or 24)) if isinstance(gh_state, dict) else 24
+                    group_guides_cfg = _serialized_group_guides(gh_state_json)
                     # lock_source 需要驱动音频覆盖全片：在编码前先把总账算清，
                     # 免得烧完几十秒编码才在某一组报 "requires drive_audio"。
                     if audio_mode == "lock_source" and internal_drive_audio is not None:
@@ -859,13 +881,24 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                             paired = reference_video_audio(video_index, soundtrack, window)
                             if paired is not None:
                                 seg_video_audios[f"ref_video_audio_{video_index}"] = paired
+                        # 本组的中段引导图：组内秒数 → 采样 latent 里的像素帧号。
+                        # 第 2 组起的 latent 头部有 pin 帧（接续引导，导出时会被裁掉），
+                        # 所以引导图要加上 head 偏移，否则会锚进被裁掉的那段里。
+                        group_guides = []
+                        for name, seconds in group_guides_cfg.get(index, ()):
+                            guide = _load_image_file(name)
+                            if guide is None:
+                                continue
+                            frame_idx = int(round(min(seconds, group_seconds) * fps))
+                            frame_idx = min(max(0, frame_idx), visible - 1) + pin
+                            group_guides.append((guide, frame_idx))
                         seg_kwargs = {
                             "task_type": "auto",
                             "audio_mode": audio_mode,
                             "audio_denoise_strength": audio_denoise_strength,
                             "add_source_as_reference": True,
-                            "strict_prompt_tags": strict_prompt_tags,
                             "ref_image_size": ref_image_size,
+                            "ref_image_zoom": ref_image_scale,
                             "drive_audio": _slice_drive_audio(
                                 internal_drive_audio, cursor, visible, fps
                             ),
@@ -876,6 +909,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                             "ref_videos": seg_videos,
                             "ref_video_audios": seg_video_audios,
                             "ref_audios": audios,
+                            "guide_images": group_guides,
                         }
                         _t_enc = time.perf_counter()
                         result = build_conditioning(
@@ -943,12 +977,19 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                         "upscale_positive": up_positive,
                     }
                     return io.NodeOutput(bundle)
+            single_guides = []
+            for name, seconds in _serialized_group_guides(gh_state_json).get(0, ()):
+                guide = _load_image_file(name)
+                if guide is None:
+                    continue
+                single_guides.append((guide, min(int(round(seconds * 24)), length - 1)))
             result = build_conditioning(
                 clip, video_vae, audio_vae, _prepend_trigger_words(prompt, trigger_words),
                 width, height, length,
                 "auto", audio_mode, audio_denoise_strength, True,
-                strict_prompt_tags, ref_image_size, internal_drive_audio, final_audio,
+                ref_image_size, ref_image_scale, internal_drive_audio, final_audio,
                 first, last, refs, ref_videos, video_audio, audios,
+                guide_images=single_guides,
             )
         finally:
             _release_text_encoder(clip)
@@ -983,6 +1024,43 @@ def _prepend_trigger_words(prompt: str, trigger_words: str) -> str:
     if not trigger_words:
         return prompt
     return f"{trigger_words}\n{prompt}" if prompt else trigger_words
+
+
+def _serialized_group_guides(gh_state_json):
+    """每组的「中段引导图」：{组下标: [(文件名, 组内秒数), ...]}。
+
+    前端存在 gh_state.guides 里；组内秒数在调用端换算成绝对像素帧号。
+    """
+    if not gh_state_json or gh_state_json == "(none)":
+        return {}
+    try:
+        state = json.loads(gh_state_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    raw = state.get("guides") if isinstance(state, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for key, items in raw.items():
+        try:
+            group_index = int(key)
+        except (TypeError, ValueError):
+            continue
+        entries = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            try:
+                seconds = float(item.get("seconds") or 0)
+            except (TypeError, ValueError):
+                continue
+            entries.append((name, max(0.0, seconds)))
+        if entries:
+            out[group_index] = entries
+    return out
 
 
 def _parse_prompt_groups(segments_json: str) -> list[dict]:

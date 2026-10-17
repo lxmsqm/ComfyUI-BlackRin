@@ -316,7 +316,10 @@ function openModelParamsDialog(service, key, model, onChange) {
         defRow.append(defBox, make("span"));
         body.append(defRow);
         body.append(make("div", "bc-hint",
-            "参数写给图文反推节点用；H3 优化器只用模型名。默认模型是该服务未指定时的兜底。"));
+            "参数写给图文反推节点用；H3 优化器只用模型名。默认模型是该服务未指定时的兜底。"
+            + "推理型模型（deepseek / sensenova / glm 等）会先花几千 token 思考，"
+            + "max_tokens 太小会导致最终答案为空——节点会自动抬到 16384 并按需翻倍，"
+            + "但在这里调大能减少重试。"));
         return { name, temperature, maxTokens, topP, defBox };
     }, refs => {
         const value = refs.name.value.trim();

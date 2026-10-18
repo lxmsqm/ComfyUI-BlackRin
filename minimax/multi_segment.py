@@ -24,6 +24,7 @@ latent 钉进下一段的 minimax_keyframes 做接续引导（参考图 refs
 from __future__ import annotations
 
 import logging
+import time
 
 import torch
 
@@ -37,7 +38,12 @@ log = logging.getLogger("ComfyUI-BlackRin.minimax.multi_segment")
 
 FRAME_RESCALE = 5.0 / 3.0
 FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
-DEFAULT_PIN_FRAMES = 22
+# 接续引导窗口。5 帧 = video_latent_t(5) = 2 token——这是同时满足两个约束的
+# 最小值：①末尾 pin 窗口起点必须落在 5 的倍数上（导出段 token 恒为 5k+2，
+# 2 token 的窗口起点 ≡0）；②SOL 的 cond 段会被整块标成 exact-KV，块内只要
+# 一行不可稀疏整块就跳过不了，所以 pin 越长、段间那些 block 越难稀疏，
+# 每步耗时上升得比线性更快（实测 22 帧 pin 让同长度段慢 2.2 倍）。
+DEFAULT_PIN_FRAMES = 5
 # 解码器按 5 个 token（17 帧）一个块铺帧，段间必须保持这个相位。
 PHASE_CYCLE = len(FRAME_PER_TOKEN)
 
@@ -191,10 +197,13 @@ def sample_multi_segment(
             )
 
         noise = _unpack(RandomNoise.execute(int(seed) + index))[0]
+        _t_guider = time.perf_counter()
         guider = _unpack(BasicGuider.execute(model, positive))[0]
+        _t_sample = time.perf_counter()
         samples = _unpack(
             SamplerCustomAdvanced.execute(noise, guider, sampler_obj, sigma_t, latent)
         )[0]
+        _t_done = time.perf_counter()
 
         sampled_tokens = _av_streams(samples)[0].shape[2]
         if head_tokens + keep_tokens > sampled_tokens:
@@ -211,10 +220,18 @@ def sample_multi_segment(
             f"（头部裁 {head_tokens} token、导出 {visible_frames} 帧 / {keep_tokens} token）"
         )
         log.info(
-            "BlackRin 多段采样 %d/%d 完成（头部 %d token，导出 %d token，累加 %d）",
+            "BlackRin 多段采样 %d/%d 完成（头部 %d token，导出 %d token，累加 %d）"
+            " · guider %.2fs / 采样 %.2fs / 每步 %.2fs",
             index + 1, len(conditionings), head_tokens, keep_tokens, accumulated,
+            _t_sample - _t_guider, _t_done - _t_sample,
+            (_t_done - _t_sample) / max(1, len(sigma_t) - 1),
         )
-        model_management.soft_empty_cache()
+        # Only reclaim when the next segment can actually use the room. On ROCm
+        # empty_cache() releases every free block back to the driver, so the
+        # next allocation re-faults from scratch and the opening steps of the
+        # following segment run much slower. Keep the cache warm otherwise.
+        if model_management.get_free_memory() < 2 * 1024 ** 3:
+            model_management.soft_empty_cache()
 
     video = torch.cat([_av_streams(p)[0] for p in parts], dim=2)
     audio = torch.cat([_av_streams(p)[1] for p in parts], dim=-1)

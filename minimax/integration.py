@@ -24,8 +24,8 @@ from comfy_api.latest._input_impl import VideoFromFile
 from comfy_extras import nodes_audio
 
 from .conditioning import build_conditioning
-from .core import FPS, align_frame_count, align_frame_count_down
-from .multi_segment import DEFAULT_PIN_FRAMES, sample_multi_segment
+from .core import FPS, align_frame_count, align_frame_count_down, video_latent_t
+from .multi_segment import DEFAULT_PIN_FRAMES, frames_for_tokens, sample_multi_segment
 from . import prompt_optimizer  # noqa: F401  (registers optimizer routes on import)
 
 
@@ -851,6 +851,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                                 f"盖不住全部 {len(groups)} 组共 {planned_seconds:.2f}s。"
                                 "请提供更长的驱动音频、调短各组时长，或把音频模式改为 native。"
                             )
+                    accumulated_tokens = 0
                     for index, group in enumerate(groups):
                         visible = align_frame_count(max(
                             5, round(float(group.get("duration") or duration_seconds) * fps)
@@ -859,10 +860,20 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                         pin = max(
                             5, align_frame_count_down(min(DEFAULT_PIN_FRAMES, visible))
                         ) if want_cont else 0
-                        # 段间拼接要保持解码相位：多段采样最多会多裁 4 个 token
-                        # （16 帧）做对齐，所以除首段外都多留一个 17 帧周期，
-                        # 保证导出长度仍是用户设定的时长。
-                        total = visible if index == 0 else align_frame_count(visible + pin + 17)
+                        # 段间拼接要保持解码相位：头部裁剪量会被补到与已累加 token
+                        # 同相位，最多多裁 4 个 token。这里把那段余量按【本段实际
+                        # 需要的 extra token】算准，而不是固定留一个 17 帧周期——
+                        # 否则每段都白采十几帧（约 10~20 秒/段）。
+                        if index == 0:
+                            total = visible
+                        else:
+                            base_tokens = video_latent_t(pin) if pin else 0
+                            want = accumulated_tokens % 5
+                            extra = next(
+                                e for e in range(5) if (base_tokens + e) % 5 == want
+                            )
+                            head_frames = frames_for_tokens(base_tokens + extra)
+                            total = align_frame_count(visible + head_frames)
                         # 参考视频按组顺序切分：第 i 组取源视频 [游标, 游标+本组时长)；
                         # 用户在前端设的选区作为整条时间轴的起点。取不到足够帧
                         # （源视频比总输出短）时，该组就不带这条参考。
@@ -927,6 +938,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                         cursor += visible
                         video_cursor += group_seconds
                         total_visible += visible
+                        accumulated_tokens += video_latent_t(visible)
                     # 二采条件：全部段提示词合并成一份"完整剧本"后单独编码，
                     # 供分块放大链全程使用（文字覆盖全片；参考视频用整条，
                     # 因为按组切分是逐段生成的事，二采跑的是全片）

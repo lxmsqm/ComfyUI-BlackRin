@@ -3,15 +3,13 @@ from __future__ import annotations
 import asyncio
 import base64
 from difflib import SequenceMatcher
-import gc
+import ipaddress
 import json
 import logging
 import os
-import platform
 from pathlib import Path
 import re
 import shutil
-import sys
 import tempfile
 import threading
 import urllib.error
@@ -26,8 +24,13 @@ from server import PromptServer
 from .. import blackrin_config
 
 
+# 输出语言不再做成开关：写哪种语言由「优化规则」决定，规则为空时一律走下面这套
+# 中文系统提示词 + 中文后处理兜底。
+MAX_TOKENS_FLOOR = 512
+MAX_TOKENS_CEILING = 32768
+DEFAULT_MAX_TOKENS = 8192
+
 DEFAULT_CONFIG = {
-    "mode": "api",
     "provider": "runninghub",
     "api_url": "https://www.runninghub.cn/openapi/v2",
     "api_key": "",
@@ -35,12 +38,7 @@ DEFAULT_CONFIG = {
     "protocol": "runninghub",
     "read_media": True,
     "unload_after": False,
-    "disable_thinking": False,
-    "output_language": "中文",
-    "local_model": "",
-    "local_mmproj": "",
-    "local_device": "cuda",
-    "max_tokens": 4096,
+    "max_tokens": DEFAULT_MAX_TOKENS,
     "auto_optimize": False,
 }
 PROVIDERS = {
@@ -106,204 +104,6 @@ _ACTIVE_REQUESTS: dict[str, asyncio.Task] = {}
 _ACTIVE_CANCEL_EVENTS: dict[str, threading.Event] = {}
 _ACTIVE_RH_TASKS: dict[str, tuple[str, str, str]] = {}
 _ASYNC_OPTIMIZER_JOBS: dict[str, asyncio.Task] = {}
-_GGUF_LOCK = threading.RLock()
-_GGUF_MODEL = None
-_GGUF_HANDLER = None
-_GGUF_CONFIG: tuple[str, str, str] | None = None
-
-
-def _llm_roots() -> list[Path]:
-    # This package lives in ComfyUI/custom_nodes/<package>; keep the model
-    # location deterministic for both desktop and hosted ComfyUI installs.
-    # Linux paths are case-sensitive, while Windows paths are not. Hosted
-    # users commonly create ``models/LLM`` instead of the documented
-    # ``models/llm``; resolve the directory case-insensitively so both work.
-    models_root = Path(__file__).resolve().parents[2] / "models"
-    preferred = models_root / "llm"
-    matching: list[Path] = []
-    if models_root.is_dir():
-        try:
-            matching = sorted(
-                (item for item in models_root.iterdir() if item.is_dir() and item.name.casefold() == "llm"),
-                key=lambda item: (item.name != "llm", item.name),
-            )
-        except OSError:
-            matching = []
-    # Keep the canonical path when no matching directory has been created yet;
-    # callers can still report an empty model list without raising.  When both
-    # ``llm`` and ``LLM`` exist (common on hosted Linux instances), scan both.
-    return matching or [preferred]
-
-
-def _llm_root() -> Path:
-    """Return the primary model root for backwards-compatible callers."""
-    return _llm_roots()[0]
-
-
-def _is_visual_model(path: Path) -> bool:
-    if not path.is_dir() or not (path / "config.json").is_file():
-        return False
-    try:
-        config = json.loads((path / "config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    text = json.dumps(config, ensure_ascii=False).lower()
-    markers = (
-        "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "qwen-vl", "qwen2_vl", "qwen2_5_vl", "qwen3_vl",
-        "vision", "visual", "gemma3", "gemma-3", "minicpm-v", "internvl",
-    )
-    if not any(marker in text for marker in markers):
-        return False
-    return any((path / name).exists() for name in ("processor_config.json", "preprocessor_config.json", "tokenizer_config.json"))
-
-
-def _is_mmproj(path: Path) -> bool:
-    name = path.name.lower()
-    return path.is_file() and path.suffix.lower() == ".gguf" and any(
-        marker in name for marker in ("mmproj", "mm-projector", "projector")
-    )
-
-
-_GGUF_PRECISION_SUFFIX = re.compile(
-    r"(?:[-_.](?:q\d+(?:[_-][a-z0-9]+)*|iq\d+(?:[_-][a-z0-9]+)*|f16|f32|fp16|fp32|bf16))+$",
-    re.IGNORECASE,
-)
-
-
-def _gguf_identity(name: str, *, projector: bool = False) -> str:
-    stem = Path(name).stem
-    if projector:
-        stem = re.sub(r"^(?:mmproj|mm-projector|projector)[-_. ]*", "", stem, flags=re.IGNORECASE)
-    stem = _GGUF_PRECISION_SUFFIX.sub("", stem)
-    return re.sub(r"[^a-z0-9]+", "", stem.lower())
-
-
-def _gguf_model_signature(name: str) -> tuple[str, str] | None:
-    """Return a stable model family/version and parameter size from loose filenames."""
-    normalized = Path(name).stem.lower().replace("_", "-")
-    family = re.search(r"(qwen\s*-?\s*3(?:[.\-]?\d+)?(?:\s*-?\s*vl)?)", normalized)
-    size = re.search(r"(?<!\d)(\d+(?:\.\d+)?)\s*b(?![a-z])", normalized)
-    if not family or not size:
-        return None
-    family_key = re.sub(r"[^a-z0-9]+", "", family.group(1))
-    return family_key, f"{size.group(1)}b"
-
-
-def _matching_mmproj(model_path: Path) -> list[Path]:
-    identity = _gguf_identity(model_path.name)
-    projectors = [
-        path
-        for root in _llm_roots() if root.is_dir()
-        for path in root.rglob("*.gguf") if _is_mmproj(path)
-    ]
-    exact = [path for path in projectors if _gguf_identity(path.name, projector=True) == identity]
-    if exact:
-        return sorted(exact, key=lambda path: path.name.lower())
-    # Projectors are commonly named only by model generation and parameter
-    # size, while the main model may add UD, publisher or quantization tokens.
-    # First keep only the same model/version/size, then choose the closest name.
-    signature = _gguf_model_signature(model_path.name)
-    compatible = [path for path in projectors if signature and _gguf_model_signature(path.name) == signature]
-    pool = compatible or projectors
-    scored = []
-    for path in pool:
-        candidate = _gguf_identity(path.name, projector=True)
-        containment = 1 if identity in candidate or candidate in identity else 0
-        ratio = SequenceMatcher(None, identity, candidate).ratio()
-        scored.append(((containment, ratio), path))
-    if not scored:
-        return []
-    best = max(score for score, _path in scored)
-    # If no family/size match exists, stay conservative and reject weak names.
-    if not compatible and best[0] == 0 and best[1] < 0.72:
-        return []
-    return sorted(
-        [path for score, path in scored if score == best],
-        key=lambda path: path.name.lower(),
-    )
-
-
-def _gguf_handler_name(path: Path) -> str | None:
-    name = path.name.lower()
-    if re.search(r"qwen[-_. ]?3[._-]?(?:5|6|8)", name):
-        return "qwen35"
-    if "qwen3-vl" in name or "qwen3vl" in name:
-        return "qwen3vl"
-    return None
-
-
-def _model_records(paths: list[tuple[Path, Path]]) -> list[tuple[Path, Path, str]]:
-    """Assign stable relative IDs, qualifying only cross-root name collisions."""
-    counts: dict[str, int] = {}
-    for root, path in paths:
-        relative = path.relative_to(root).as_posix()
-        counts[relative.casefold()] = counts.get(relative.casefold(), 0) + 1
-    return [
-        (
-            root,
-            path,
-            f"{root.name}/{relative}" if counts[relative.casefold()] > 1 else relative,
-        )
-        for root, path in paths
-        for relative in (path.relative_to(root).as_posix(),)
-    ]
-
-
-def _scan_visual_models() -> list[dict]:
-    result = []
-    roots = _llm_roots()
-    transformer_paths = []
-    gguf_paths = []
-    for root in roots:
-        if not root.is_dir():
-            continue
-        # Models are commonly organized in per-family subfolders
-        # (e.g. LLM/Qwen/Qwen3.8 iq4 ud/...), so scan recursively instead of
-        # only the first directory level.
-        for path in sorted(
-            (item.parent for item in root.rglob("config.json") if item.is_file()),
-            key=lambda item: str(item).lower(),
-        ):
-            if _is_visual_model(path):
-                transformer_paths.append((root, path))
-        for path in sorted(root.rglob("*.gguf"), key=lambda item: str(item).lower()):
-            if not _is_mmproj(path) and _gguf_handler_name(path) is not None:
-                gguf_paths.append((root, path))
-    for _root, path, relative in _model_records(transformer_paths):
-        result.append({"name": path.name, "path": str(path), "relative_path": relative, "format": "transformers"})
-    mmproj_by_path = {str(Path(item["path"]).absolute()): item["relative_path"] for item in _scan_mmproj_models()}
-    for _root, path, relative in _model_records(gguf_paths):
-        candidate_names = [
-            mmproj_by_path[str(candidate.absolute())]
-            for candidate in _matching_mmproj(path)
-            if str(candidate.absolute()) in mmproj_by_path
-        ]
-        result.append({
-            "name": path.name,
-            "path": str(path),
-            "relative_path": relative,
-            "format": "gguf",
-            "mmproj_candidates": candidate_names,
-        })
-    return result
-
-
-def _scan_mmproj_models() -> list[dict]:
-    paths = []
-    for root in _llm_roots():
-        if not root.is_dir():
-            continue
-        for path in sorted(root.rglob("*.gguf"), key=lambda item: str(item).lower()):
-            if _is_mmproj(path):
-                paths.append((root, path))
-    return [
-        {"name": path.name, "path": str(path), "relative_path": relative}
-        for _root, path, relative in _model_records(paths)
-    ]
-
-
-def _find_visual_model(selected: str) -> dict | None:
-    return next((item for item in _scan_visual_models() if item["relative_path"] == selected), None)
 
 
 def _optimizer_services() -> list[dict]:
@@ -343,6 +143,15 @@ def _optimizer_rules() -> list[dict]:
     return blackrin_config.optimizer_rules()
 
 
+def _clamp_max_tokens(value) -> int:
+    """把最大输出 tokens 收进 [512, 32768]；坏值回落默认值。"""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = DEFAULT_MAX_TOKENS
+    return max(MAX_TOKENS_FLOOR, min(MAX_TOKENS_CEILING, number))
+
+
 def _normalize_config(data: dict | None) -> dict:
     current = DEFAULT_CONFIG
     data = data if isinstance(data, dict) else {}
@@ -359,13 +168,8 @@ def _normalize_config(data: dict | None) -> dict:
     )
     provider_models = data.get("provider_models") if isinstance(data.get("provider_models"), dict) else {}
     provider_model = provider_models.get(provider)
-    try:
-        max_tokens = int(data.get("max_tokens", current.get("max_tokens", 4096)))
-    except (TypeError, ValueError):
-        max_tokens = 4096
-    max_tokens = max(512, min(8192, max_tokens))
+    max_tokens = _clamp_max_tokens(data.get("max_tokens", current.get("max_tokens", DEFAULT_MAX_TOKENS)))
     config = {
-        "mode": "local" if str(data.get("mode") or current.get("mode") or "api").lower() == "local" else "api",
         "provider": provider,
         "assistant_service": str(data.get("assistant_service") or "").strip(),
         "rule": str(data.get("rule") or "").strip(),
@@ -377,11 +181,6 @@ def _normalize_config(data: dict | None) -> dict:
         "protocol": str(data.get("protocol") or (preset[2] if preset else current["protocol"])).lower(),
         "read_media": bool(data.get("read_media", current["read_media"])),
         "unload_after": bool(data.get("unload_after", current.get("unload_after", False))),
-        "disable_thinking": bool(data.get("disable_thinking", current.get("disable_thinking", False))),
-        "output_language": "中文" if str(data.get("output_language") or current.get("output_language") or "中文").lower() in {"中文", "chinese", "zh"} else "English",
-        "local_model": str(data.get("local_model") or current.get("local_model") or "").strip(),
-        "local_mmproj": str(data.get("local_mmproj") or current.get("local_mmproj") or "").strip(),
-        "local_device": str(data.get("local_device") or current.get("local_device") or "cuda").lower(),
         "max_tokens": max_tokens,
         "auto_optimize": bool(data.get("auto_optimize", current.get("auto_optimize", False))),
     }
@@ -564,307 +363,6 @@ async def _runninghub_result_text(session: aiohttp.ClientSession, results: list)
     raise RuntimeError("RunningHub 返回结果中没有文本或 TXT 文件")
 
 
-def _local_model_path(config: dict) -> Path:
-    selected = str(config.get("local_model") or "").strip()
-    if not selected:
-        raise ValueError("请先选择本地视觉模型")
-    found = _find_visual_model(selected)
-    if found is None:
-        raise ValueError("所选本地模型不存在，或不是可识别的视觉模型")
-    return Path(found["path"])
-
-
-def _selected_local_model(config: dict) -> dict:
-    selected = str(config.get("local_model") or "").strip()
-    found = _find_visual_model(selected)
-    if found is None:
-        raise ValueError("所选本地模型不存在，或不是可识别的视觉模型")
-    return found
-
-
-def _selected_mmproj(config: dict, model: dict) -> Path:
-    candidates = list(model.get("mmproj_candidates") or [])
-    selected = str(config.get("local_mmproj") or "").strip()
-    if selected:
-        available = {item["relative_path"]: item for item in _scan_mmproj_models()}
-        item = available.get(selected)
-        if item is None:
-            raise ValueError("已选择的mmproj视觉模型不存在，请重新选择")
-        path = Path(item["path"])
-        if not path.is_file():
-            raise ValueError("已选择的mmproj文件不存在")
-        return path
-    if not candidates:
-        raise ValueError("未找到与当前GGUF模型匹配的mmproj视觉模型")
-    if len(candidates) > 1:
-        raise ValueError("检测到多个匹配的mmproj视觉模型，请在配置页面选择一个版本")
-    available = {item["relative_path"]: item for item in _scan_mmproj_models()}
-    item = available.get(candidates[0])
-    if item is None or not Path(item["path"]).is_file():
-        raise ValueError("自动匹配的mmproj视觉模型不存在，请重新选择")
-    return Path(item["path"])
-
-
-def _cuda_tag() -> str | None:
-    try:
-        import torch
-        value = str(torch.version.cuda or "")
-    except Exception:
-        value = ""
-    match = re.match(r"(\d+)\.(\d+)", value)
-    return f"cu{match.group(1)}{match.group(2)}" if match else None
-
-
-def _gguf_dependency_status() -> dict:
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
-    cuda_tag = _cuda_tag()
-    platform_tag = "win_amd64" if system == "windows" and machine in {"amd64", "x86_64"} else (
-        "linux_x86_64" if system == "linux" and machine in {"amd64", "x86_64"} else None
-    )
-    status = {
-        "available": False,
-        "reason": "",
-        "system": platform.system(),
-        "machine": platform.machine(),
-        "python_tag": python_tag,
-        "cuda_tag": cuda_tag or "",
-        "release_url": "https://github.com/JamePeng/llama-cpp-python/releases",
-        "wheel_url": "",
-        "wheel_name": "",
-    }
-    try:
-        import llama_cpp
-        from llama_cpp.llama_chat_format import Qwen35ChatHandler  # noqa: F401
-        status["available"] = True
-        status["version"] = str(getattr(llama_cpp, "__version__", "unknown"))
-        return status
-    except Exception as error:
-        status["reason"] = str(error)
-    if system == "darwin":
-        status["release_url"] = "https://github.com/JamePeng/llama-cpp-python/releases"
-        return status
-    if not cuda_tag or not platform_tag:
-        return status
-    # JamePeng release assets follow a stable version/cuda/python/platform
-    # naming scheme. Resolve the current latest matching asset when online.
-    try:
-        request = urllib.request.Request(
-            "https://api.github.com/repos/JamePeng/llama-cpp-python/releases?per_page=30",
-            headers={"User-Agent": "Goohai-MiniMax-H3-Integration"},
-        )
-        with urllib.request.urlopen(request, timeout=8) as response:
-            releases = json.load(response)
-        marker = f"-{cuda_tag}-{'win' if system == 'windows' else 'linux'}-"
-        for release in releases:
-            if marker not in str(release.get("tag_name") or ""):
-                continue
-            for asset in release.get("assets") or []:
-                name = str(asset.get("name") or "")
-                if python_tag in name and platform_tag in name:
-                    status["wheel_name"] = name
-                    status["wheel_url"] = str(asset.get("browser_download_url") or "")
-                    status["release_url"] = str(release.get("html_url") or status["release_url"])
-                    return status
-    except Exception:
-        pass
-    return status
-
-
-def _unload_gguf_model() -> bool:
-    global _GGUF_MODEL, _GGUF_HANDLER, _GGUF_CONFIG
-    with _GGUF_LOCK:
-        loaded = _GGUF_MODEL is not None or _GGUF_HANDLER is not None
-        try:
-            if _GGUF_MODEL is not None:
-                _GGUF_MODEL.close()
-        except Exception:
-            pass
-        try:
-            stack = getattr(_GGUF_HANDLER, "_exit_stack", None)
-            if stack is not None:
-                stack.close()
-        except Exception:
-            pass
-        _GGUF_MODEL = _GGUF_HANDLER = _GGUF_CONFIG = None
-    gc.collect()
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
-    return loaded
-
-
-def _data_url_image(data_url: str):
-    from io import BytesIO
-    from PIL import Image
-    _header, encoded = str(data_url).split(",", 1)
-    return Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
-
-
-def _unload_comfy_models() -> None:
-    """Release ComfyUI-managed models and cached allocations before/after local VLM use."""
-    from comfy import model_management
-
-    model_management.unload_all_models()
-    gc.collect()
-    model_management.soft_empty_cache()
-
-
-def _local_generate(config: dict, payload: dict) -> str:
-    """Run one local VLM request with ComfyUI models unloaded on both sides."""
-    _unload_comfy_models()
-    try:
-        return _local_generate_impl(config, payload)
-    finally:
-        _unload_comfy_models()
-
-
-def _local_generate_impl(config: dict, payload: dict) -> str:
-    """Load one local VLM only for this request, then release its objects."""
-    model_path = _local_model_path(config)
-    if model_path.suffix.lower() == ".gguf":
-        return _gguf_generate(config, payload)
-    model = processor = inputs = output = generated = None
-    try:
-        import torch
-        from transformers import AutoModelForImageTextToText, AutoProcessor, StoppingCriteria, StoppingCriteriaList
-        cancel_event = payload.get("_cancel_event")
-
-        class CancelledStoppingCriteria(StoppingCriteria):
-            def __call__(self, input_ids, scores, **kwargs):
-                return bool(cancel_event and cancel_event.is_set())
-        device = config.get("local_device")
-        if device not in {"cpu", "cuda"}:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.float16 if device == "cuda" else torch.float32
-        processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
-        model = AutoModelForImageTextToText.from_pretrained(
-            str(model_path), torch_dtype=dtype, device_map="auto" if device == "cuda" else None,
-            trust_remote_code=True,
-        )
-        if device == "cpu":
-            model.to("cpu")
-        user_prompt = str(payload.get("prompt") or "")
-        media = payload.get("media") if isinstance(payload.get("media"), list) else []
-        content = [{"type": "text", "text": "User prompt:\n" + user_prompt + _output_language_mandate(str(config.get("output_language") or "English"))}]
-        for item in media:
-            label = str(item.get("label") or "")
-            kind = str(item.get("kind") or "")
-            try:
-                at_seconds = float(item.get("guide_seconds"))
-            except (TypeError, ValueError):
-                at_seconds = None
-            if kind == "audio":
-                content.append({"type": "text", "text": f"{label} is an uploaded audio reference; audio data is not transmitted."})
-            else:
-                for data_url in item.get("images") or []:
-                    content.append({"type": "image", "image": _data_url_image(data_url)})
-                    if at_seconds is not None:
-                        content.append({"type": "text", "text":
-                            f"This visual is a picture anchor pinned at {at_seconds:.2f}s in the target video "
-                            f"({label}); it is NOT a numbered prompt label — describe its visible content in words."})
-                    else:
-                        content.append({"type": "text", "text": f"This visual belongs to {label}; use the label, never a filename."})
-        system = _system_prompt(
-            str(payload.get("task") or "T2VA"), float(payload.get("duration") or 5),
-            [str(item.get("label")) for item in media if item.get("label")],
-            str(config.get("output_language") or "English"),
-            payload.get("context") if isinstance(payload.get("context"), dict) else {}, user_prompt,
-        )
-        messages = [{"role": "system", "content": [{"type": "text", "text": system}]}, {"role": "user", "content": content}]
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        images = [part["image"] for part in content if part.get("type") == "image"]
-        inputs = processor(text=[text], images=images or None, padding=True, return_tensors="pt")
-        input_device = next(model.parameters()).device
-        inputs = {key: value.to(input_device) if hasattr(value, "to") else value for key, value in inputs.items()}
-        with torch.inference_mode():
-            output = model.generate(
-                **inputs, max_new_tokens=int(config.get("max_tokens") or 4096), do_sample=False,
-                stopping_criteria=StoppingCriteriaList([CancelledStoppingCriteria()]),
-            )
-        if cancel_event and cancel_event.is_set():
-            raise RuntimeError("提示词优化已取消")
-        generated = output[:, inputs["input_ids"].shape[1]:]
-        return processor.batch_decode(generated, skip_special_tokens=True)[0].strip()
-    finally:
-        output = generated = inputs = model = processor = None
-        gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-
-
-def _gguf_generate(config: dict, payload: dict) -> str:
-    global _GGUF_MODEL, _GGUF_HANDLER, _GGUF_CONFIG
-    dependency = _gguf_dependency_status()
-    if not dependency.get("available"):
-        suffix = f"\n下载地址: {dependency['wheel_url']}" if dependency.get("wheel_url") else (
-            f"\n发布页面: {dependency['release_url']}"
-        )
-        raise RuntimeError(
-            "GGUF视觉模型依赖不可用。"
-            f"当前环境: {dependency['system']} {dependency['machine']} / {dependency['python_tag']} / "
-            f"{dependency.get('cuda_tag') or '无CUDA'}。{suffix}\n安装后请重启ComfyUI。"
-        )
-    model = _selected_local_model(config)
-    model_path = Path(model["path"])
-    mmproj_path = _selected_mmproj(config, model)
-    handler_name = _gguf_handler_name(model_path)
-    if handler_name not in {"qwen35", "qwen3vl"}:
-        raise ValueError("当前GGUF视觉模型类型暂不支持")
-    cancel_event = payload.get("_cancel_event")
-    target_config = (str(model_path), str(mmproj_path), handler_name)
-    try:
-        from llama_cpp import Llama
-        from llama_cpp.llama_chat_format import Qwen35ChatHandler, Qwen3VLChatHandler
-        with _GGUF_LOCK:
-            if _GGUF_MODEL is None or _GGUF_CONFIG != target_config:
-                _unload_gguf_model()
-                handler_cls = Qwen35ChatHandler if handler_name == "qwen35" else Qwen3VLChatHandler
-                kwargs = {"clip_model_path": str(mmproj_path), "verbose": False}
-                if handler_name == "qwen35":
-                    kwargs["enable_thinking"] = False
-                else:
-                    kwargs["force_reasoning"] = False
-                _GGUF_HANDLER = handler_cls(**kwargs)
-                _GGUF_MODEL = Llama(
-                    model_path=str(model_path), chat_handler=_GGUF_HANDLER,
-                    n_gpu_layers=-1, n_ctx=16384, verbose=False,
-                )
-                _GGUF_CONFIG = target_config
-        user_prompt = str(payload.get("prompt") or "")
-        media = payload.get("media") if isinstance(payload.get("media"), list) else []
-        system, _custom = _resolve_system_prompt(config, payload)
-        content = [{"type": "text", "text": "User prompt:\n" + user_prompt + _output_language_mandate(str(config.get("output_language") or "English"))}]
-        for item in media:
-            label = str(item.get("label") or "")
-            if str(item.get("kind") or "") == "audio":
-                content.append({"type": "text", "text": f"{label} is an uploaded audio reference; audio data is not transmitted."})
-                continue
-            for index, data_url in enumerate(item.get("images") or []):
-                content.append({"type": "text", "text": f"{label} visual {index + 1}."})
-                content.append({"type": "image_url", "image_url": {"url": data_url}})
-        if cancel_event and cancel_event.is_set():
-            raise RuntimeError("提示词优化已取消")
-        with _GGUF_LOCK:
-            result = _GGUF_MODEL.create_chat_completion(
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
-                max_tokens=int(config.get("max_tokens") or 4096), temperature=0.2, top_p=0.9,
-            )
-        if cancel_event and cancel_event.is_set():
-            raise RuntimeError("提示词优化已取消")
-        return str(result["choices"][0]["message"]["content"] or "").removeprefix(": ").strip()
-    finally:
-        _unload_gguf_model()
-
-
 def _endpoint(config: dict) -> str:
     base = config["api_url"].rstrip("/")
     if config["protocol"] == "gemini":
@@ -936,7 +434,6 @@ def _system_prompt(
     task: str,
     duration: float,
     labels: list[str],
-    output_language: str = "English",
     context: dict | None = None,
     user_prompt: str = "",
 ) -> str:
@@ -1096,6 +593,7 @@ def _system_prompt(
             "dialogue, props, events, or sounds; do not expand the source timeline or reconstruct it from sampled frames. Treat the three sampled images from one <video N> as observation "
             "frames of that single reference video, never as separate target shots or evidence of cuts."
         )
+    # 默认系统提示词固定写中文；要别的语言请在「优化规则」里换一套模板。
     language_rule = (
         "输出语言强制为中文：所有自然语言说明、主体描述、摘要、镜头描述、声音说明和音乐说明必须使用简体中文，"
         "不得输出英文句子。只有官方固定字段名 subject_definitions、summary、retention_analysis、"
@@ -1103,9 +601,6 @@ def _system_prompt(
         "媒体与主体标签、[Shot N]，以及 fully_preserved、partially_preserved、attribute_transfer、"
         "weak_reference、fully_copy、partially_copy、reference 等固定关系标记保留英文。返回前必须检查并将"
         "其他英文自然语言全部改写成中文。"
-        if output_language == "中文" else
-        "Output all natural-language content in English. Keep supplied dialogue, lyrics, and visible text in their "
-        "original language."
     )
     dialogue_rule = (
         "Official dialogue formatting is mandatory in every task and is independent of the selected narration "
@@ -1114,8 +609,8 @@ def _system_prompt(
         "<d>[Chinese]中文原文</d>; never write Chinese dialogue only inside quotation marks, and never omit [Chinese]. "
         "Keep the speaker description, stable speaker ID such as (S1), speaking action, and delivery outside the <d> "
         "block; inside it preserve only the user's exact words and punctuation without translation or rewriting. "
-        "The output-language setting controls narration only: an English prompt must still retain supplied Chinese "
-        "dialogue as <d>[Chinese]...</d>. Placement is as mandatory as formatting: every <d> block must be embedded "
+        "Narration language never overrides supplied dialogue: Chinese speech stays <d>[Chinese]...</d> even in a "
+        "Chinese-language answer. Placement is as mandatory as formatting: every <d> block must be embedded "
         "inside integrated_multimodal_description or detailed_description at the exact chronological moment when the "
         "speaker speaks or sings, immediately after that speaker's speaking/singing action and delivery description. "
         "Never collect dialogue into a list, appendix, footer, or separate paragraph after the official sections. "
@@ -1182,10 +677,8 @@ def _system_prompt(
     )
 
 
-def _output_language_mandate(output_language: str) -> str:
+def _output_language_mandate() -> str:
     """追加在用户消息末尾的语言硬性要求——模型对提示词末尾的权重最高。"""
-    if str(output_language or "").lower() not in {"中文", "chinese", "zh", "zh-cn"}:
-        return ""
     return (
         "\n\n【输出语言硬性要求（最高优先级，覆盖其他一切指令）】\n"
         "最终结果必须全部使用简体中文撰写。任何英文句子、英文短语或英文单词的出现都视为任务失败——"
@@ -1280,7 +773,7 @@ def _extract_explicit_dialogues(prompt: str) -> list[tuple[str, str]]:
     return candidates
 
 
-def _ensure_supplied_dialogues(text: str, user_prompt: str, output_language: str) -> str:
+def _ensure_supplied_dialogues(text: str, user_prompt: str) -> str:
     """Keep supplied dialogue exactly once and inside the main shot timeline."""
     result = str(text)
     dialogues_to_insert = []
@@ -1360,35 +853,25 @@ def _ensure_supplied_dialogues(text: str, user_prompt: str, output_language: str
             insert_at = shot.end() if shot else 0
         sentences = []
         for order, (index, tag) in enumerate(dialogues_to_insert):
-            if str(output_language).lower() in {"中文", "chinese", "zh", "zh-cn"}:
-                action = "说" if order == 0 else "随后继续说"
-                sentences.append(f"画面中的说话者 (S{index}) {action}：{tag}")
-            else:
-                action = "says" if order == 0 else "then continues"
-                sentences.append(f"The on-screen speaker (S{index}) {action}: {tag}")
+            action = "说" if order == 0 else "随后继续说"
+            sentences.append(f"画面中的说话者 (S{index}) {action}：{tag}")
         insertion = " " + " ".join(sentences) + " "
         timeline = timeline[:insert_at] + insertion + timeline[insert_at:]
         result = result[:main_start] + timeline + result[main_end:]
     return re.sub(r"[ \t]+\n", "\n", result).strip()
 
 
-def _ensure_fl2va_picture_labels(text: str, task: str, duration: float, output_language: str) -> str:
+def _ensure_fl2va_picture_labels(text: str, task: str, duration: float) -> str:
     """Guarantee that an FL2VA result retains both official bare picture labels."""
     if str(task).upper() != "FL2VA":
         return text
     lowered = str(text).lower()
     if "picture 1" in lowered and "picture 2" in lowered:
         return text
-    if str(output_language).lower() in {"中文", "chinese", "zh", "zh-cn"}:
-        alignment = (
-            f"参考图像与目标视频对齐关系：picture 1 对齐目标视频的 0.00 秒首帧；"
-            f"picture 2 对齐目标视频的 {duration:.2f} 秒尾帧。"
-        )
-    else:
-        alignment = (
-            "Reference-picture alignment: picture 1 is the target video's exact opening frame at 0.00s; "
-            f"picture 2 is its exact ending frame at {duration:.2f}s."
-        )
+    alignment = (
+        f"参考图像与目标视频对齐关系：picture 1 对齐目标视频的 0.00 秒首帧；"
+        f"picture 2 对齐目标视频的 {duration:.2f} 秒尾帧。"
+    )
     return f"{alignment}\n\n{text}".strip()
 
 
@@ -1400,32 +883,6 @@ def _strip_think(text: str) -> str:
     if open_idx >= 0:
         cleaned = cleaned[:open_idx]
     return cleaned.strip()
-
-
-async def _unload_after_optimize(config: dict) -> None:
-    """开关开启时，优化完成后请求 llama-swap 卸载模型（best effort）。"""
-    if not config.get("unload_after"):
-        return
-    if str(config.get("protocol") or "") != "openai":
-        return
-    base = str(config.get("api_url") or "").strip().rstrip("/")
-    if base.endswith("/v1"):
-        base = base[:-3]
-    base = base.rstrip("/")
-    model = str(config.get("model") or "")
-    query = ("?" + urllib.parse.urlencode({"model": model})) if model else ""
-    candidates = [base + "/unload" + query]
-    timeout = aiohttp.ClientTimeout(total=5)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        for url in candidates:
-            try:
-                async with session.get(url) as response:
-                    if response.status < 400:
-                        logging.info("BlackRin 优化完成，已请求卸载模型: %s", url)
-                        return
-            except Exception as exc:
-                logging.info("BlackRin 卸载端点 %s 不可达（尝试下一个）: %s", url, exc)
-    logging.info("BlackRin 优化后没有可用的卸载端点（llama.cpp / LM Studio 请用各自的自动卸载设置）")
 
 
 def _extract_openai(data: dict) -> str:
@@ -1504,7 +961,6 @@ def _resolve_system_prompt(config: dict, payload: dict) -> tuple[str, bool]:
         task,
         duration,
         labels,
-        str(config.get("output_language") or "English"),
         context,
         str(payload.get("prompt") or ""),
     ), False
@@ -1515,10 +971,8 @@ def _request_parts(config: dict, payload: dict):
     user_prompt = str(payload.get("prompt") or "")
     system, _custom = _resolve_system_prompt(config, payload)
     parts = _user_parts(user_prompt, media, bool(config.get("read_media")))
-    mandate = _output_language_mandate(str(config.get("output_language") or ""))
-    if mandate:
-        parts[0]["text"] += mandate
-    max_tokens = max(512, min(8192, int(config.get("max_tokens") or 4096)))
+    parts[0]["text"] += _output_language_mandate()
+    max_tokens = _clamp_max_tokens(config.get("max_tokens"))
     headers = {"Content-Type": "application/json"}
     if config["protocol"] == "gemini":
         gemini_parts = []
@@ -1568,22 +1022,9 @@ def _request_parts(config: dict, payload: dict):
                 {"role": "user", "content": parts},
             ],
         }
-        # SiliconFlow reasoning models may consume the whole output budget in
-        # reasoning_content and return an empty final content while still
-        # charging for a successful request. Prompt optimization needs the
-        # final answer only, so explicitly disable thinking on this compatible
-        # endpoint. Unsupported models ignore or accept this documented field.
-        api_host = urllib.parse.urlparse(str(config.get("api_url") or "")).hostname or ""
-        model_name = str(config.get("model") or "").lower()
-        siliconflow_thinking_model = any(marker in model_name for marker in (
-            "qwen3", "deepseek", "glm-4.5", "glm-4.6", "glm-4.7", "glm-5", "hunyuan-a13b",
-        ))
-        # 用户显式开启，或 SiliconFlow 推理模型的既有自动行为。
-        # 两套字段齐发：SiliconFlow/vLLM 认 enable_thinking，
-        # llama.cpp server / llama-swap 认 chat_template_kwargs；不认的服务端忽略。
-        if config.get("disable_thinking") or (api_host.lower() == "api.siliconflow.cn" and siliconflow_thinking_model):
-            body["enable_thinking"] = False
-            body["chat_template_kwargs"] = {"enable_thinking": False}
+        # 思考开关不再下发：推理型模型（qwen3 / deepseek / glm 等）照它的默认
+        # 行为思考，输出预算由 max_tokens 兜住；混进正文的 <think> 块由
+        # _strip_think 统一剥掉，不会污染提示词。
         headers["Authorization"] = f"Bearer {config['api_key']}"
         url = _endpoint(config)
     return url, headers, body
@@ -1652,7 +1093,7 @@ async def _request_runninghub(config: dict, payload: dict) -> str:
                 elif kind == "audio":
                     mapping_notes.append(f"{label} is an audio reference label; audio data is not separately transmitted.")
 
-            user_prompt = "User prompt:\n" + str(payload.get("prompt") or "") + _output_language_mandate(str(config.get("output_language") or "English"))
+            user_prompt = "User prompt:\n" + str(payload.get("prompt") or "") + _output_language_mandate()
             if mapping_notes:
                 user_prompt += "\n\nReference mapping:\n" + "\n".join(mapping_notes)
             node_info = [
@@ -1664,7 +1105,7 @@ async def _request_runninghub(config: dict, payload: dict) -> str:
                 {"nodeId": str(app_nodes["model"]), "fieldName": "model", "fieldValue": str(config.get("model") or model_cache[0])},
                 {"nodeId": str(app_nodes["system_prompt"]), "fieldName": "Text", "fieldValue": system_prompt},
                 {"nodeId": str(app_nodes["user_prompt"]), "fieldName": "Text", "fieldValue": user_prompt},
-                {"nodeId": str(app_nodes["max_tokens"]), "fieldName": "value", "fieldValue": str(int(config.get("max_tokens") or 4096))},
+                {"nodeId": str(app_nodes["max_tokens"]), "fieldName": "value", "fieldValue": str(_clamp_max_tokens(config.get("max_tokens")))},
             ]
             async with session.post(
                 f"{rh_api_base}/run/ai-app/{rh_app_id}",
@@ -1734,18 +1175,90 @@ async def _request_runninghub(config: dict, payload: dict) -> str:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def _request_async(config: dict, payload: dict) -> str:
-    if config.get("mode") == "local":
-        model_path = _local_model_path(config)
-        if model_path.suffix.lower() != ".gguf" and _local_missing_dependencies():
-            raise RuntimeError("本地视觉模型依赖缺失: " + ", ".join(_local_missing_dependencies()))
+def _is_local_api_host(api_url: str) -> bool:
+    """只有本机 / 局域网 / mDNS 的 API 才值得试卸载；云端一律跳过。"""
+    try:
+        host = urllib.parse.urlparse(str(api_url or "")).hostname or ""
+    except ValueError:
+        return False
+    host = host.strip("[]").strip().lower()
+    if not host:
+        return False
+    if host in {"localhost", "localhost.localdomain", "host.docker.internal", "host.containers.internal"}:
+        return True
+    if host.endswith(".local") or host.endswith(".lan"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
+def _api_unload_targets(api_url: str, model: str) -> list[tuple[str, str, dict | None]]:
+    """同一台机器上常见卸载写法的候选清单（不认的服务端会 404，无副作用）。
+
+    - llama-swap 网关：GET {root}/unload?model=...（有的版本只认 POST）
+    - Ollama：POST {root}/api/generate 带 keep_alive=0 即"用完就放"
+    - root 同时试带 /v1 的原地址与剥掉 /v1 的根地址
+    """
+    base = str(api_url or "").strip().rstrip("/")
+    if not base:
+        return []
+    roots = [base]
+    bare = re.sub(r"/v\d+$", "", base)
+    if bare and bare != base:
+        roots.insert(0, bare)
+    query = ("?" + urllib.parse.urlencode({"model": model})) if model else ""
+    targets: list[tuple[str, str, dict | None]] = []
+    for root in roots:
+        targets.append(("GET", root + "/unload" + query, None))
+        targets.append(("POST", root + "/unload", {"model": model} if model else {}))
+        if model:
+            targets.append(("POST", root + "/api/generate", {"model": model, "keep_alive": 0}))
+    return targets
+
+
+async def _unload_api_model(config: dict) -> None:
+    """开关打开时，优化跑完就让本地 API 服务把模型放掉，给后面的采样腾显存。
+
+    只对本机 / 局域网地址生效（云端平台没有卸载接口，也轮不到我们管）；
+    best effort：所有候选并发打一遍，谁先回 2xx/3xx 就算成功；全部失败也
+    只写一条日志，绝不影响已经拿到的提示词。
+    """
+    if not config.get("unload_after"):
+        return
+    if str(config.get("provider") or "").lower() in {"runninghub", "runninghub_overseas"}:
+        return
+    api_url = str(config.get("api_url") or "")
+    if not _is_local_api_host(api_url):
+        return
+    targets = _api_unload_targets(api_url, str(config.get("model") or ""))
+    if not targets:
+        return
+
+    async def attempt(session: aiohttp.ClientSession, method: str, url: str, payload: dict | None) -> tuple[str, int] | None:
         try:
-            return await asyncio.wait_for(asyncio.to_thread(_local_generate, config, payload), timeout=200)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            cancel_event = payload.get("_cancel_event")
-            if cancel_event:
-                cancel_event.set()
-            raise
+            request = session.get(url) if method == "GET" else session.post(url, json=payload)
+            async with request as response:
+                return url, response.status
+        except Exception:
+            return None
+
+    timeout = aiohttp.ClientTimeout(total=5)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            results = await asyncio.gather(*(attempt(session, *target) for target in targets))
+    except Exception:
+        return
+    for result in results:
+        if result and result[1] < 400:
+            logging.info("BlackRin 优化完成，已请求卸载模型: %s", result[0])
+            return
+    logging.info("BlackRin 优化完成，但没有服务端响应卸载请求（%s 未提供卸载接口）", api_url)
+
+
+async def _request_async(config: dict, payload: dict) -> str:
     if config.get("provider") == "assistant":
         config = _resolve_assistant_provider(config)
     if config.get("provider") == "runninghub" or config.get("protocol") == "runninghub":
@@ -1765,37 +1278,20 @@ async def _request_async(config: dict, payload: dict) -> str:
         raise RuntimeError(f"API request failed: {error}") from error
     if config["protocol"] == "gemini":
         try:
-            return "".join(part.get("text", "") for part in data["candidates"][0]["content"]["parts"]).strip()
+            result = "".join(part.get("text", "") for part in data["candidates"][0]["content"]["parts"]).strip()
         except (KeyError, IndexError, TypeError):
             raise RuntimeError("Gemini returned no optimized prompt")
-    await _unload_after_optimize(config)
-    if config["protocol"] == "responses":
-        return _strip_think(_extract_openai_responses(data))
-    return _strip_think(_extract_openai(data))
+    elif config["protocol"] == "responses":
+        result = _strip_think(_extract_openai_responses(data))
+    else:
+        result = _strip_think(_extract_openai(data))
+    # 拿完结果就让本机 / 局域网 API 服务把模型放掉（best effort，失败无所谓）。
+    await _unload_api_model(config)
+    return result
 
 
 async def get_prompt_optimizer_config(_request):
-    config = _public_config(DEFAULT_CONFIG)
-    config["models"] = _scan_visual_models()
-    config["mmproj_models"] = _scan_mmproj_models()
-    config["missing_dependencies"] = _local_missing_dependencies()
-    config["gguf_dependency"] = _gguf_dependency_status()
-    return web.json_response(config)
-
-
-def _local_missing_dependencies() -> list[str]:
-    import importlib.util
-    required = ("torch", "transformers", "PIL", "accelerate", "safetensors")
-    return [name for name in required if importlib.util.find_spec(name) is None]
-
-
-async def list_prompt_optimizer_models(_request):
-    return web.json_response({
-        "models": _scan_visual_models(),
-        "mmproj_models": _scan_mmproj_models(),
-        "missing_dependencies": _local_missing_dependencies(),
-        "gguf_dependency": _gguf_dependency_status(),
-    })
+    return web.json_response(_public_config(DEFAULT_CONFIG))
 
 
 async def refresh_runninghub_models(_request):
@@ -1891,13 +1387,7 @@ async def save_prompt_optimizer_config(request):
 def _prepare_prompt_optimization(payload: dict) -> tuple[dict, threading.Event]:
     node_config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     config = _normalize_config(node_config)
-    if config.get("mode") == "local":
-        model_path = _local_model_path(config)
-        if model_path.suffix.lower() == ".gguf":
-            _selected_mmproj(config, _selected_local_model(config))
-        elif _local_missing_dependencies():
-            raise RuntimeError("本地视觉模型依赖缺失: " + ", ".join(_local_missing_dependencies()))
-    elif config.get("provider") != "assistant" and (
+    if config.get("provider") != "assistant" and (
         not config.get("api_url") or not config.get("model") or not config.get("api_key")
     ):
         raise ValueError("请先配置提示词优化 API")
@@ -1921,12 +1411,10 @@ async def _run_prompt_optimization(config: dict, payload: dict) -> str:
         formatted,
         str(payload.get("task") or "T2VA"),
         float(payload.get("duration") or 5),
-        str(config.get("output_language") or "English"),
     )
     formatted = _ensure_supplied_dialogues(
         formatted,
         str(payload.get("prompt") or ""),
-        str(config.get("output_language") or "English"),
     )
     return _normalize_subject_shorthand(formatted)
 
@@ -2030,7 +1518,6 @@ def register_prompt_optimizer_routes() -> bool:
         return False
     routes = instance.routes
     routes.get("/blackrin/minimax-h3/prompt-optimizer/config")(get_prompt_optimizer_config)
-    routes.get("/blackrin/minimax-h3/prompt-optimizer/models")(list_prompt_optimizer_models)
     routes.get("/blackrin/minimax-h3/prompt-optimizer/runninghub-models")(refresh_runninghub_models)
     routes.post("/blackrin/minimax-h3/prompt-optimizer/custom-models")(list_custom_api_models)
     routes.post("/blackrin/minimax-h3/prompt-optimizer/config")(save_prompt_optimizer_config)

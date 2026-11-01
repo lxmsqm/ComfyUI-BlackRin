@@ -246,10 +246,9 @@ const DOM_TRANSLATIONS = {
     "Up to 3 audios": "最多3个音频",
     "Optimize": "优化", "LLM Prompt Optimization Configuration": "LLM提示词优化配置",
     "Provider": "平台", "API key": "API Key", "Read visual references": "读取视觉素材",
-    "Unload model after optimization": "优化完成后立即卸载模型",
-    "Disable model thinking": "禁用模型思考（多字段，覆盖 llama.cpp 系）",
-
-    "HTTP unload only works on llama-swap; llama.cpp / LM Studio may not support it — unload the model yourself if needed": "HTTP 卸载仅 llama-swap 支持；llama.cpp / LM Studio 可能不支持，必要时请自行卸载模型",
+    "Unload model after optimization": "优化完成后卸载模型",
+    "Only works for local / LAN API addresses (llama-swap, Ollama, LM Studio…); cloud platforms are ignored":
+        "仅对本地 / 局域网 API 地址生效（llama-swap、Ollama、LM Studio 等）；云端平台一律忽略",
     "Save": "保存", "Cancel": "取消", "Custom": "自定义",
     "API URL": "API 地址", "Model": "模型", "Protocol": "协议",
     "Prompt is connected to an upstream node; the internal prompt is disabled!": "提示词已连接上游节点，内部提示词已禁用！",
@@ -257,19 +256,8 @@ const DOM_TRANSLATIONS = {
     "Optimizing": "优化中", "Restore before optimization": "恢复优化前", "Configure API": "配置API",
     "Prompt optimizer API is not configured. Open settings now?": "尚未配置提示词优化 API，是否立即打开设置？",
     "Confirm": "确定",
-    "Output language": "输出语言",
     "Maximum output tokens": "最大输出 Tokens",
-    "Optimization mode": "优化方式", "Online API": "在线 API", "Local vision model": "本地视觉模型",
-    "Refresh local models": "刷新本地模型", "Local model": "本地模型", "Local device": "本地设备",
-    "Search local models": "搜索本地模型", "Search models": "搜索模型", "No matching models": "没有匹配的模型",
-    "Automatic optimization before run": "运行前自动优化提示词", "No compatible local vision models found": "未找到可用的本地视觉模型",
-    "Missing local model dependencies": "缺少本地模型依赖",
-    "Choose vision projector": "选择视觉投影模型", "Vision model (mmproj)": "视觉模型（mmproj）",
-    "No mmproj models found": "未找到mmproj视觉模型",
-    "Multiple matching mmproj files were found. Choose one:": "检测到多个匹配的mmproj文件，请选择一个：",
-    "GGUF dependency unavailable": "GGUF运行依赖不可用",
-    "Download matching dependency": "下载匹配依赖",
-    "Restart ComfyUI after installation": "安装后请重启ComfyUI",
+    "Automatic optimization before run": "运行前自动优化提示词",
     "Trim audio": "裁剪音频",
     "Trim video": "裁剪视频",
     "Video clip range": "视频取用区间",
@@ -558,9 +546,9 @@ function createPanel(node) {
       .ghh3-audio-drop .ghh3-drop-icon{font-size:14px;line-height:1;height:1.2em}
       .ghh3-drop-title-row .ghh3-optional{position:static;display:inline-flex;align-items:center;height:1.2em;line-height:1.2}
       .ghh3-keygrid .ghh3-drop:not(.ghh3-audio-drop) .ghh3-drop-icon,.ghh3-keygrid .ghh3-drop:not(.ghh3-audio-drop) .ghh3-optional{transform:translateY(-1px)}
-       .ghh3-prompt-wrap{position:relative;display:grid;grid-template-rows:22px minmax(0,1fr);width:100%;height:100%;min-height:0;background:#1d2731;border-radius:6px;overflow:hidden}.ghh3-prompt-wrap .ghh3-prompt{grid-row:2;border-radius:0 0 6px 6px}.ghh3-prompt-wrap.external .ghh3-prompt{opacity:.42;cursor:not-allowed}.ghh3-prompt-tools{grid-row:1;display:flex;align-items:center;justify-content:flex-end;gap:3px;padding:2px 5px;box-sizing:border-box;background:#1d2731;z-index:4}.ghh3-prompt-elapsed{display:none;margin-right:auto;color:#617684;font:9px/17px Arial,sans-serif}.ghh3-prompt-elapsed.visible{display:inline-block}.ghh3-optimizer-model{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;color:rgba(96,116,130,.6);font:8px/17px Arial,sans-serif;margin-left:auto;margin-right:17px}.ghh3-prompt-tool{height:17px;min-width:17px;padding:0 3px;border:0;border-radius:3px;background:#1d2731;color:#6f8291;font:11px/17px Arial,sans-serif;cursor:pointer;opacity:.72;flex:0 0 auto}.ghh3-optimize-tool{font-size:13px}.ghh3-prompt-tool:hover{color:#9aabb8;background:#24323e}.ghh3-prompt-tool:disabled{opacity:.25;cursor:not-allowed}.ghh3-prompt-reset{display:none;font-size:12px;line-height:15px}.ghh3-prompt-reset.visible{display:inline-block}.ghh3-prompt-loading{color:#0aa4d6!important;opacity:1!important;animation:ghh3-spin 1.6s linear infinite}@keyframes ghh3-spin{to{transform:rotate(360deg)}}.ghh3-tool-tip{position:fixed;z-index:10100;padding:4px 7px;border-radius:4px;background:#111a22;color:#cbd7df;border:1px solid #344753;font:10px/1.2 Arial,sans-serif;pointer-events:none;white-space:nowrap}.ghh3-opt-check{justify-self:end;width:auto!important}.ghh3-opt-language{display:grid;grid-template-columns:1fr 1fr;width:100%;align-items:center}.ghh3-opt-language label{display:flex;align-items:center;gap:4px;white-space:nowrap}.ghh3-opt-language label:first-child{justify-self:start}.ghh3-opt-language label:last-child{justify-self:end}.ghh3-opt-language input{width:auto}
+       .ghh3-prompt-wrap{position:relative;display:grid;grid-template-rows:22px minmax(0,1fr);width:100%;height:100%;min-height:0;background:#1d2731;border-radius:6px;overflow:hidden}.ghh3-prompt-wrap .ghh3-prompt{grid-row:2;border-radius:0 0 6px 6px}.ghh3-prompt-wrap.external .ghh3-prompt{opacity:.42;cursor:not-allowed}.ghh3-prompt-tools{grid-row:1;display:flex;align-items:center;justify-content:flex-end;gap:3px;padding:2px 5px;box-sizing:border-box;background:#1d2731;z-index:4}.ghh3-prompt-elapsed{display:none;margin-right:auto;color:#617684;font:9px/17px Arial,sans-serif}.ghh3-prompt-elapsed.visible{display:inline-block}.ghh3-optimizer-model{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;color:rgba(96,116,130,.6);font:8px/17px Arial,sans-serif;margin-left:auto;margin-right:17px}.ghh3-prompt-tool{height:17px;min-width:17px;padding:0 3px;border:0;border-radius:3px;background:#1d2731;color:#6f8291;font:11px/17px Arial,sans-serif;cursor:pointer;opacity:.72;flex:0 0 auto}.ghh3-optimize-tool{font-size:13px}.ghh3-prompt-tool:hover{color:#9aabb8;background:#24323e}.ghh3-prompt-tool:disabled{opacity:.25;cursor:not-allowed}.ghh3-prompt-reset{display:none;font-size:12px;line-height:15px}.ghh3-prompt-reset.visible{display:inline-block}.ghh3-prompt-loading{color:#0aa4d6!important;opacity:1!important;animation:ghh3-spin 1.6s linear infinite}@keyframes ghh3-spin{to{transform:rotate(360deg)}}.ghh3-tool-tip{position:fixed;z-index:10100;padding:4px 7px;border-radius:4px;background:#111a22;color:#cbd7df;border:1px solid #344753;font:10px/1.2 Arial,sans-serif;pointer-events:none;white-space:nowrap}.ghh3-opt-check{justify-self:end;width:auto!important}.ghh3-opt-hint{margin:-2px 0 6px;color:#6b7f8f;font:10px/1.4 Arial,sans-serif}
        .ghh3-prompt-wrap{grid-template-columns:minmax(0,1fr)}.ghh3-prompt-wrap .ghh3-prompt-rich{position:absolute;grid-row:auto;left:0;right:0;top:22px;bottom:0;width:100%;height:auto;min-height:0;max-height:none;z-index:2;overflow-x:hidden;overflow-y:auto;background:#1d2731;color:#e1e9ef;-webkit-text-fill-color:currentColor;caret-color:#e1e9ef;line-height:2.35;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:7px 7px calc(7px + 14 * 1.4em)}.ghh3-prompt-rich.ghh3-prompt-empty:before{content:attr(data-placeholder);position:absolute;left:7px;right:7px;top:7px;color:#52616d;white-space:pre-wrap;pointer-events:none}.ghh3-prompt-highlight{display:none}.ghh3-prompt-rich mark{padding:0;color:#27d9e5;-webkit-text-fill-color:#27d9e5;background:transparent;font:inherit}.ghh3-prompt-section{padding:0;color:#168b99;-webkit-text-fill-color:#168b99;background:transparent;font:inherit}.ghh3-prompt-tag{display:inline-block;box-sizing:border-box;padding:1px 5px;margin:0 2px;border-radius:5px;background:#3b3b3b;color:#cdcdcd;-webkit-text-fill-color:#cdcdcd;font-size:.86em;line-height:1.35;vertical-align:middle;white-space:nowrap}.ghh3-prompt-tag-video{background:#493f59}.ghh3-prompt-tag-picture{background:#31515a}.ghh3-prompt-media-token{display:inline-flex;align-items:center;vertical-align:middle;white-space:nowrap}.ghh3-prompt-media-preview{position:static;flex:0 0 26px;width:26px;height:26px;margin-left:.5em;margin-right:4px;box-sizing:border-box;border:1px solid rgba(91,124,143,.72);border-radius:5px;background:#14222d;object-fit:cover;color:#77a5b7;display:inline-flex;align-items:center;justify-content:center;font:14px/26px Arial,sans-serif;overflow:hidden;vertical-align:middle;user-select:none}.ghh3-prompt-media-preview.ghh3-prompt-audio-preview{border-radius:50%}.ghh3-prompt-media-preview.ghh3-prompt-audio-preview:before{content:"♫";font-size:13px}.ghh3-prompt-wrap.external .ghh3-prompt-rich{opacity:.42}
-        .ghh3-opt-overlay{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.58);font:12px Arial,sans-serif}.ghh3-opt-dialog{width:min(470px,calc(100vw - 30px));background:#17222c;color:#d7e3ec;border:1px solid #344958;border-radius:9px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:14px}.ghh3-opt-title{font-size:12px;margin-bottom:12px;white-space:nowrap}.ghh3-opt-row{display:grid;grid-template-columns:140px minmax(0,1fr);align-items:center;gap:8px;min-height:38px;margin:0}.ghh3-opt-row>span{white-space:nowrap}.ghh3-opt-row input,.ghh3-opt-row select{width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:6px;font:inherit}.ghh3-opt-hidden{display:none!important}.ghh3-opt-model-row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:7px;min-width:0}.ghh3-opt-model-native{display:none}.ghh3-opt-model-picker{width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:6px 24px 6px 7px;cursor:pointer;position:relative;font:inherit}.ghh3-opt-model-picker:after{content:"⌄";position:absolute;right:7px}.ghh3-opt-model-menu{display:none;position:absolute;left:0;top:calc(100% + 4px);z-index:10070;box-sizing:border-box;width:max-content;min-width:100%;max-width:calc(100vw - 30px);padding:5px;background:#17222c;border:1px solid #3a4d5b;border-radius:5px;box-shadow:0 8px 22px rgba(0,0,0,.45)}.ghh3-opt-model-menu.open{display:block}.ghh3-opt-model-search{display:block;width:100%;min-width:100%;margin-bottom:5px;font:inherit}.ghh3-opt-model-results{max-height:285px;overflow:auto}.ghh3-opt-model-option{display:block;width:max-content;min-width:100%;border:0;background:transparent;color:#dce7ee;text-align:left;padding:6px;border-radius:3px;white-space:nowrap;cursor:pointer;font:inherit}.ghh3-opt-model-option:hover,.ghh3-opt-model-option.selected{background:#274252}.ghh3-opt-model-empty{padding:7px;color:#8294a2;font-size:12px}.ghh3-opt-refresh{display:flex;align-items:center;justify-content:center;width:30px;height:30px;margin:0;background:#1d2b36;color:#cbd8e0;border:1px solid #3a4d5b;border-radius:4px;padding:0;cursor:pointer;font-size:16px;line-height:1;white-space:nowrap;transition:background .12s,color .12s,border-color .12s}.ghh3-opt-refresh:hover{background:#263b49;border-color:#4c6879;color:#e4f1f5}.ghh3-opt-refresh:active{background:#17535a;border-color:#2a7c85;color:#fff}.ghh3-opt-refresh.loading{background:#17535a;border-color:#2a7c85;color:#42d8e5;cursor:wait}.ghh3-opt-refresh.loading svg{animation:ghh3-spin 1.2s linear infinite}.ghh3-opt-refresh:disabled{opacity:.85}.ghh3-opt-dependencies{margin:6px 0;color:#d98d97;font-size:12px;line-height:1.35}.ghh3-opt-checks{margin:0}.ghh3-opt-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:28px}.ghh3-opt-actions button{border:1px solid #3a4d5b;border-radius:4px;background:#1d2b36;color:#cbd8e0;padding:5px 12px;cursor:pointer}.ghh3-opt-actions button:last-child{background:#17535a;border-color:#26717a;color:#e0f2f2}.ghh3-opt-custom{display:none}.ghh3-opt-dialog.custom .ghh3-opt-custom{display:grid}
+        .ghh3-opt-overlay{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.58);font:12px Arial,sans-serif}.ghh3-opt-dialog{width:min(470px,calc(100vw - 30px));background:#17222c;color:#d7e3ec;border:1px solid #344958;border-radius:9px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:14px}.ghh3-opt-title{font-size:12px;margin-bottom:12px;white-space:nowrap}.ghh3-opt-row{display:grid;grid-template-columns:140px minmax(0,1fr);align-items:center;gap:8px;min-height:38px;margin:0}.ghh3-opt-row>span{white-space:nowrap}.ghh3-opt-row input,.ghh3-opt-row select{width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:6px;font:inherit}.ghh3-opt-hidden{display:none!important}.ghh3-opt-model-row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:7px;min-width:0}.ghh3-opt-model-native{display:none}.ghh3-opt-model-picker{width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:6px 24px 6px 7px;cursor:pointer;position:relative;font:inherit}.ghh3-opt-model-picker:after{content:"⌄";position:absolute;right:7px}.ghh3-opt-model-menu{display:none;position:absolute;left:0;top:calc(100% + 4px);z-index:10070;box-sizing:border-box;width:max-content;min-width:100%;max-width:calc(100vw - 30px);padding:5px;background:#17222c;border:1px solid #3a4d5b;border-radius:5px;box-shadow:0 8px 22px rgba(0,0,0,.45)}.ghh3-opt-model-menu.open{display:block}.ghh3-opt-model-search{display:block;width:100%;min-width:100%;margin-bottom:5px;font:inherit}.ghh3-opt-model-results{max-height:285px;overflow:auto}.ghh3-opt-model-option{display:block;width:max-content;min-width:100%;border:0;background:transparent;color:#dce7ee;text-align:left;padding:6px;border-radius:3px;white-space:nowrap;cursor:pointer;font:inherit}.ghh3-opt-model-option:hover,.ghh3-opt-model-option.selected{background:#274252}.ghh3-opt-model-empty{padding:7px;color:#8294a2;font-size:12px}.ghh3-opt-refresh{display:flex;align-items:center;justify-content:center;width:30px;height:30px;margin:0;background:#1d2b36;color:#cbd8e0;border:1px solid #3a4d5b;border-radius:4px;padding:0;cursor:pointer;font-size:16px;line-height:1;white-space:nowrap;transition:background .12s,color .12s,border-color .12s}.ghh3-opt-refresh:hover{background:#263b49;border-color:#4c6879;color:#e4f1f5}.ghh3-opt-refresh:active{background:#17535a;border-color:#2a7c85;color:#fff}.ghh3-opt-refresh.loading{background:#17535a;border-color:#2a7c85;color:#42d8e5;cursor:wait}.ghh3-opt-refresh.loading svg{animation:ghh3-spin 1.2s linear infinite}.ghh3-opt-refresh:disabled{opacity:.85}.ghh3-opt-checks{margin:0}.ghh3-opt-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:28px}.ghh3-opt-actions button{border:1px solid #3a4d5b;border-radius:4px;background:#1d2b36;color:#cbd8e0;padding:5px 12px;cursor:pointer}.ghh3-opt-actions button:last-child{background:#17535a;border-color:#26717a;color:#e0f2f2}.ghh3-opt-custom{display:none}.ghh3-opt-dialog.custom .ghh3-opt-custom{display:grid}
         .ghh3-video-trim-preview{margin-bottom:10px}
 .ghh3-video-trim-track{position:relative;height:34px;margin:6px 0 4px;border:1px solid #324b5b;border-radius:6px;background:#0d1720;touch-action:none}
 .ghh3-video-trim-selection{position:absolute;top:0;bottom:0;background:rgba(10,164,214,.24);border-left:1px solid #0aa4d6;border-right:1px solid #0aa4d6;pointer-events:none}
@@ -606,6 +594,23 @@ function createPanel(node) {
             text_keyframes: (savedState.mode || "text_keyframes") === "text_keyframes" ? optimizerBefore : null,
             all_reference: savedState.mode === "all_reference" ? optimizerBefore : null,
         };
+    // optimizerSettings 里混着两类字段：用户真正选过的设置（应随工作流保存）
+    // 和后端每次 /config 派生出来的清单（模型列表、服务列表、规则名列表）。
+    // 后者一旦被序列化就会过期——用户删掉一条规则，工作流里那份旧快照仍然
+    // 把名字喂给下拉，于是删了还在。这里只存用户设置，派生数据每次打开重新取。
+    const OPTIMIZER_PERSISTED_KEYS = [
+        "mode", "provider", "assistant_service", "rule", "api_url", "api_key",
+        "model", "protocol", "read_media", "unload_after",
+        "max_tokens", "auto_optimize", "api_keys", "provider_models",
+    ];
+    const persistedOptimizer = () => {
+        if (!optimizerSettings || typeof optimizerSettings !== "object") return null;
+        const out = {};
+        for (const key of OPTIMIZER_PERSISTED_KEYS) {
+            if (optimizerSettings[key] !== undefined) out[key] = optimizerSettings[key];
+        }
+        return out;
+    };
     const serializedState = () => {
         promptByMode[state.mode] = prompt.value;
         return JSON.stringify({
@@ -620,7 +625,7 @@ function createPanel(node) {
             audioModeByMode: { ...audioModeByMode },
             audioModeAutoByMode: { ...audioModeAutoByMode },
             guides: savedState.guides,
-            optimizer: optimizerSettings,
+            optimizer: persistedOptimizer(),
             optimizerCache,
             optimizerBefore,
             optimizerBeforeByMode: { ...optimizerBeforeByMode },
@@ -1044,10 +1049,6 @@ function createPanel(node) {
     if (optimizerBefore != null) resetPrompt.classList.add("visible");
     const configuredOptimizerName = () => {
         if (!optimizerSettings) return "";
-        if (optimizerSettings.mode === "local") {
-            const name = String(optimizerSettings.local_model || "").split(/[\\/]/).pop();
-            return name ? `本地：${name}` : "";
-        }
         const rawName = String(optimizerSettings.model || "").trim().split("/").pop();
         const name = rawName
             .replace(/^gpt(?=[-_.\d])/i, "GPT")
@@ -1946,16 +1947,14 @@ function nodeColorToCss(value) {
     }
     function refreshPromptConnection() {
         const external = upstreamConnected();
-        const localBlocked = workflowRunning && optimizerSettings?.mode === "local";
         prompt.readOnly = external;
         promptWrap.classList.toggle("external", external);
         prompt.title = external ? t("Prompt is connected to an upstream node; the internal prompt is disabled!") : "";
-        optimizePrompt.disabled = external || localBlocked;
+        optimizePrompt.disabled = external;
         resetPrompt.disabled = external;
     }
-    const updateWorkflowState = running => {
+    const updateWorkflowState = () => {
         refreshPromptConnection();
-        if (running && optimizing && optimizerSettings?.mode === "local") cancelOptimization();
     };
     workflowStateHandlers.add(updateWorkflowState);
     installWorkflowStateMonitor();
@@ -2443,7 +2442,7 @@ function nodeColorToCss(value) {
     };
     const migrateLegacyOptimizerDefault = settings => {
         settings = migrateProviderApiKeys(settings);
-        if (!settings || settings.mode === "local") return settings;
+        if (!settings) return settings;
         const provider = String(settings.provider || "").toLowerCase();
         const model = String(settings.model || "").toLowerCase();
         const apiUrl = String(settings.api_url || "").replace(/\/$/, "").toLowerCase();
@@ -2478,33 +2477,35 @@ function nodeColorToCss(value) {
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
         return data;
     }
+    // 后端每次 /config 都会重新算出这些清单（模型、服务、规则名）。它们是
+    // 派生数据，绝不能以存档里的旧值为准——否则用户删掉的规则、换掉的服务
+    // 会一直留在下拉里。这里无条件用后端的值覆盖，只有请求失败才退回旧值。
+    const OPTIMIZER_DERIVED_KEYS = [
+        "runninghub_models", "runninghub_overseas_models", "assistant_services",
+        "assistant_rules", "has_api_key",
+    ];
     async function loadOptimizerSettings() {
         if (optimizerSettings) {
-            if (!Array.isArray(optimizerSettings.runninghub_models) || !optimizerSettings.runninghub_models.length
-                || !Array.isArray(optimizerSettings.runninghub_overseas_models) || !optimizerSettings.runninghub_overseas_models.length
-                || !Array.isArray(optimizerSettings.mmproj_models) || !optimizerSettings.mmproj_models.length) {
-                try {
-                    const defaults = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/config`, { cache: "no-store" });
-                    optimizerSettings = {
-                        ...defaults,
-                        ...optimizerSettings,
-                        runninghub_models: defaults.runninghub_models || [],
-                        runninghub_overseas_models: defaults.runninghub_overseas_models || [],
-                        models: optimizerSettings.models || defaults.models || [],
-                        mmproj_models: optimizerSettings.mmproj_models || defaults.mmproj_models || [],
-                        missing_dependencies: optimizerSettings.missing_dependencies || defaults.missing_dependencies || [],
-                    };
-                } catch (error) {
-                    console.warn("MiniMax H3 prompt optimizer settings refresh failed; using saved settings:", error);
-                    optimizerSettings = {
-                        ...optimizerSettings,
-                        runninghub_models: optimizerSettings.runninghub_models || [],
-                        runninghub_overseas_models: optimizerSettings.runninghub_overseas_models || [],
-                        models: optimizerSettings.models || [],
-                        mmproj_models: optimizerSettings.mmproj_models || [],
-                        missing_dependencies: optimizerSettings.missing_dependencies || [],
-                    };
+            try {
+                const defaults = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/config`, { cache: "no-store" });
+                const merged = { ...defaults, ...optimizerSettings };
+                for (const key of OPTIMIZER_DERIVED_KEYS) {
+                    if (defaults[key] !== undefined) merged[key] = defaults[key];
                 }
+                // 用户选过但已经消失的规则名（例如删掉了那条规则）要清空，
+                // 否则下拉会显示一个不存在的选项。
+                const rules = Array.isArray(merged.assistant_rules) ? merged.assistant_rules : [];
+                if (merged.rule && !rules.includes(merged.rule)) merged.rule = "";
+                optimizerSettings = merged;
+            } catch (error) {
+                console.warn("MiniMax H3 prompt optimizer settings refresh failed; using saved settings:", error);
+                optimizerSettings = {
+                    ...optimizerSettings,
+                    runninghub_models: optimizerSettings.runninghub_models || [],
+                    runninghub_overseas_models: optimizerSettings.runninghub_overseas_models || [],
+                    assistant_rules: optimizerSettings.assistant_rules || [],
+                    assistant_services: optimizerSettings.assistant_services || [],
+                };
             }
             optimizerSettings = migrateLegacyOptimizerDefault(optimizerSettings);
             refreshOptimizerName();
@@ -2517,13 +2518,19 @@ function nodeColorToCss(value) {
         refreshOptimizerName(); refreshPromptConnection();
         return optimizerSettings;
     }
+    // 最大输出 tokens 的硬边界，与后端 prompt_optimizer.MAX_TOKENS_* 保持一致。
+    const OPTIMIZER_MAX_TOKENS = { min: 512, max: 32768, fallback: 8192 };
+    function clampMaxTokens(value) {
+        const number = Number.parseInt(value, 10);
+        if (!Number.isFinite(number)) return OPTIMIZER_MAX_TOKENS.fallback;
+        return Math.max(OPTIMIZER_MAX_TOKENS.min, Math.min(OPTIMIZER_MAX_TOKENS.max, number));
+    }
     function openOptimizerSettings() {
         loadOptimizerSettings().then(current => {
             const overlay = make("div"); overlay.className = "ghh3-opt-overlay";
             const dialog = make("div"); dialog.className = "ghh3-opt-dialog"; overlay.append(dialog);
             const title = make("div", {}, t("LLM Prompt Optimization Configuration")); title.className = "ghh3-opt-title"; dialog.append(title);
             const row = (label, control, custom = false) => { const wrap = make("label"); wrap.className = `ghh3-opt-row${custom ? " ghh3-opt-custom" : ""}`; wrap.append(make("span", {}, t(label)), control); dialog.append(wrap); return control; };
-            const mode = row("Optimization mode", make("select")); mode.append(new Option(t("Online API"), "api"), new Option(t("Local vision model"), "local")); mode.value = current.mode || "api";
             const provider = row("Provider", make("select"));
             for (const [value, preset] of Object.entries(optimizerProviders)) provider.append(new Option(preset.label, value));
             provider.value = current.provider || "runninghub";
@@ -2533,14 +2540,6 @@ function nodeColorToCss(value) {
             if (current.model && !providerModels[current.provider || "runninghub"]) providerModels[current.provider || "runninghub"] = current.model;
             const key = row("API key", make("input")); key.type = "password"; key.value = providerApiKeys[provider.value] || "";
             const readMedia = make("input"); readMedia.type = "checkbox"; readMedia.checked = current.read_media !== false; readMedia.className = "ghh3-opt-check";
-            const unloadAfter = make("input"); unloadAfter.type = "checkbox"; unloadAfter.checked = current.unload_after === true; unloadAfter.className = "ghh3-opt-check";
-            unloadAfter.title = "优化完成后请求 llama-swap 立即卸载模型";
-            const disableThinking = make("input"); disableThinking.type = "checkbox"; disableThinking.checked = current.disable_thinking === true; disableThinking.className = "ghh3-opt-check";
-            disableThinking.title = "请求同时带 enable_thinking=false 和 chat_template_kwargs 字段，覆盖 llama-swap / llama.cpp / SiliconFlow 等；LM Studio 用响应剥离兜底";
-            const language = make("div"); language.className = "ghh3-opt-language";
-            for (const value of ["English", "中文"]) {
-                const label = make("label"); const radio = make("input"); radio.type = "radio"; radio.name = `ghh3-output-language-${node.id}`; radio.value = value; radio.checked = (current.output_language || "中文") === value; label.append(radio, make("span", {}, value)); language.append(label);
-            }
             const url = row("API URL", make("input"), true);
             const customModelGroup = make("div"); customModelGroup.className = "ghh3-opt-model-row";
             const model = make("input"); model.placeholder = t("Model ID, or click refresh to fetch"); customModelGroup.append(model);
@@ -2609,6 +2608,7 @@ function nodeColorToCss(value) {
             };
             fillAssistantModels();
             assistantService.addEventListener("change", fillAssistantModels);
+            // loadOptimizerSettings 已保证 assistant_rules 是后端实时值。
             const assistantRules = [...(current.assistant_rules || [])];
             const ruleSelect = row("优化规则", make("select"));
             ruleSelect.append(new Option("默认（节点内置）", ""));
@@ -2636,96 +2636,26 @@ function nodeColorToCss(value) {
                 if (opening) { runninghubModelSearch.value = ""; renderRunninghubModels(); requestAnimationFrame(() => runninghubModelSearch.focus()); }
             };
             runninghubModelSearch.addEventListener("input", renderRunninghubModels);
-            const localModelGroup = make("div"); localModelGroup.className = "ghh3-opt-model-row";
-            const localModel = make("select"); localModel.className = "ghh3-opt-model-native"; localModelGroup.append(localModel);
-            const localModelPicker = make("button"); localModelPicker.type = "button"; localModelPicker.className = "ghh3-opt-model-picker"; localModelGroup.append(localModelPicker);
-            const localModelMenu = make("div"); localModelMenu.className = "ghh3-opt-model-menu";
-            const localModelSearch = make("input"); localModelSearch.type = "search"; localModelSearch.placeholder = t("Search local models"); localModelSearch.className = "ghh3-opt-model-search";
-            const localModelResults = make("div"); localModelResults.className = "ghh3-opt-model-results";
-            localModelMenu.append(localModelSearch, localModelResults); localModelGroup.append(localModelMenu);
-            const refreshModels = make("button"); refreshModels.type = "button"; refreshModels.className = "ghh3-opt-refresh"; refreshModels.innerHTML = refreshIcon; refreshModels.title = t("Refresh local models"); refreshModels.setAttribute("aria-label", t("Refresh local models")); localModelGroup.append(refreshModels);
-            row("Local model", localModelGroup);
-            const localMmproj = row("Vision model (mmproj)", make("select"));
-            const localDevice = row("Local device", make("select")); localDevice.append(new Option("Auto", "auto"), new Option("GPU", "cuda"), new Option("CPU", "cpu")); localDevice.value = current.local_device || "cuda";
-            const dependencyStatus = make("div"); dependencyStatus.className = "ghh3-opt-dependencies"; dialog.append(dependencyStatus);
             const maxTokens = row("Maximum output tokens", make("input"));
-            maxTokens.type = "number"; maxTokens.min = "512"; maxTokens.max = "8192"; maxTokens.step = "512";
-            maxTokens.value = String(Math.max(512, Math.min(8192, Number(current.max_tokens) || 4096)));
+            maxTokens.type = "number"; maxTokens.min = "512"; maxTokens.max = "32768"; maxTokens.step = "512";
+            maxTokens.title = "单次优化的输出上限；推理型模型会先思考再回答，留够预算才不会空手而归";
+            maxTokens.value = String(clampMaxTokens(current.max_tokens));
             const normalizeMaxTokens = () => {
-                const value = Number.parseInt(maxTokens.value, 10);
-                maxTokens.value = String(Math.max(512, Math.min(8192, Number.isFinite(value) ? value : 4096)));
+                maxTokens.value = String(clampMaxTokens(maxTokens.value));
             };
             maxTokens.addEventListener("change", normalizeMaxTokens);
-            row("Output language", language);
             const checkboxRows = make("div"); checkboxRows.className = "ghh3-opt-checks";
             const checkboxRow = (label, control) => { const wrap = make("label"); wrap.className = "ghh3-opt-row"; wrap.append(make("span", {}, t(label)), control); checkboxRows.append(wrap); };
             checkboxRow("Read visual references", readMedia);
+            const unloadAfter = make("input"); unloadAfter.type = "checkbox"; unloadAfter.checked = current.unload_after === true; unloadAfter.className = "ghh3-opt-check";
+            unloadAfter.title = t("Only works for local / LAN API addresses (llama-swap, Ollama, LM Studio…); cloud platforms are ignored");
             checkboxRow("Unload model after optimization", unloadAfter);
-            checkboxRow("Disable model thinking", disableThinking);
-            const unloadHint = make("div", {}, t("HTTP unload only works on llama-swap; llama.cpp / LM Studio may not support it — unload the model yourself if needed"));
-            unloadHint.style.cssText = "color:#6b7f8f;font-size:10px;line-height:1.4;margin:2px 0 4px";
-            dialog.appendChild(unloadHint);
             const autoOptimize = make("input"); autoOptimize.type = "checkbox"; autoOptimize.checked = !!current.auto_optimize; autoOptimize.className = "ghh3-opt-check"; checkboxRow("Automatic optimization before run", autoOptimize);
             dialog.append(checkboxRows);
-            let localModels = current.models || [];
-            let mmprojModels = current.mmproj_models || [];
-            let mmprojManuallySelected = !!current.local_mmproj;
-            const selectedLocalModel = () => localModels.find(item => item.relative_path === localModel.value);
-            const fillMmprojModels = (models = mmprojModels, preserveValue = localMmproj.value || current.local_mmproj || "") => {
-                mmprojModels = models || [];
-                localMmproj.replaceChildren();
-                localMmproj.append(new Option(t(mmprojModels.length ? "Choose vision projector" : "No mmproj models found"), ""));
-                mmprojModels.forEach(item => localMmproj.append(new Option(item.name, item.relative_path)));
-                if ([...localMmproj.options].some(option => option.value === preserveValue)) localMmproj.value = preserveValue;
-            };
-            const autoSelectMmproj = () => {
-                const selected = selectedLocalModel();
-                if (selected?.format !== "gguf") { localMmproj.value = ""; return; }
-                const best = selected.mmproj_candidates?.find(value => mmprojModels.some(item => item.relative_path === value));
-                localMmproj.value = best || "";
-            };
-            const refreshModelPicker = () => {
-                const selected = selectedLocalModel();
-                localModelPicker.textContent = selected?.name || t("No compatible local vision models found");
-            };
-            const renderModelResults = () => {
-                const keyword = localModelSearch.value.trim().toLowerCase();
-                const filtered = keyword
-                    ? localModels.filter(item => `${item.name} ${item.relative_path}`.toLowerCase().includes(keyword))
-                    : localModels;
-                localModelResults.replaceChildren();
-                if (!filtered.length) {
-                    const empty = make("div", {}, t("No compatible local vision models found")); empty.className = "ghh3-opt-model-empty"; localModelResults.append(empty); return;
-                }
-                for (const item of filtered) {
-                    const option = make("button", {}, item.name); option.type = "button"; option.className = "ghh3-opt-model-option";
-                    option.classList.toggle("selected", item.relative_path === localModel.value);
-                    option.onclick = () => { localModel.value = item.relative_path; mmprojManuallySelected = false; refreshModelPicker(); autoSelectMmproj(); sync(); localModelMenu.classList.remove("open"); };
-                    localModelResults.append(option);
-                }
-            };
-            const fillModels = (models = localModels, preserveValue = localModel.value || current.local_model || "") => {
-                localModels = models || [];
-                localModel.replaceChildren();
-                localModels.forEach(item => localModel.append(new Option(item.name, item.relative_path)));
-                if ([...localModel.options].some(option => option.value === preserveValue)) localModel.value = preserveValue;
-                if (!localModel.options.length) localModel.append(new Option(t("No compatible local vision models found"), ""));
-                refreshModelPicker(); renderModelResults();
-            };
-            const showDependencies = missing => { dependencyStatus.textContent = missing?.length ? `${t("Missing local model dependencies")}: ${missing.join(", ")}` : ""; };
-            fillMmprojModels(current.mmproj_models);
-            fillModels(current.models);
-            if (!localMmproj.value) autoSelectMmproj();
-            showDependencies(current.missing_dependencies);
-            localModelPicker.onclick = () => {
-                const opening = !localModelMenu.classList.contains("open");
-                localModelMenu.classList.toggle("open", opening);
-                if (opening) { localModelSearch.value = ""; renderModelResults(); requestAnimationFrame(() => localModelSearch.focus()); }
-            };
-            localModelSearch.addEventListener("input", renderModelResults);
-            localMmproj.addEventListener("change", () => { mmprojManuallySelected = !!localMmproj.value; });
+            const unloadHint = make("div"); unloadHint.className = "ghh3-opt-hint";
+            unloadHint.textContent = t("Only works for local / LAN API addresses (llama-swap, Ollama, LM Studio…); cloud platforms are ignored");
+            dialog.append(unloadHint);
             dialog.addEventListener("pointerdown", event => {
-                if (!localModelGroup.contains(event.target)) localModelMenu.classList.remove("open");
                 if (!runninghubModelGroup.contains(event.target)) runninghubModelMenu.classList.remove("open");
                 if (!customModelGroup.contains(event.target)) customModelMenu.classList.remove("open");
             });
@@ -2747,23 +2677,6 @@ function nodeColorToCss(value) {
                     runninghub_overseas_models: [...runninghubModelsByProvider.runninghub_overseas],
                 };
             }).catch(error => alert(error.message));
-            refreshModels.onclick = () => withRefreshState(refreshModels, async () => {
-                const data = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/models`, { cache: "no-store" });
-                const previousModel = localModel.value;
-                const previousMmproj = localMmproj.value;
-                fillMmprojModels(data.mmproj_models, previousMmproj);
-                fillModels(data.models, previousModel);
-                const manualStillExists = mmprojManuallySelected && mmprojModels.some(item => item.relative_path === previousMmproj);
-                if (!manualStillExists) { mmprojManuallySelected = false; autoSelectMmproj(); }
-                optimizerSettings = {
-                    ...(optimizerSettings || current),
-                    models: [...localModels],
-                    mmproj_models: [...mmprojModels],
-                    missing_dependencies: data.missing_dependencies || [],
-                };
-                sync(); showDependencies(data.missing_dependencies);
-            }).catch(error => alert(error.message));
-            if (!current.models) refreshModels.click();
             refreshCustomModels.onclick = () => withRefreshState(refreshCustomModels, async () => {
                 const fetched = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/custom-models`, {
                     method: "POST",
@@ -2783,21 +2696,13 @@ function nodeColorToCss(value) {
                 const assistant = provider.value === "assistant";
                 const runninghub = provider.value === "runninghub" || provider.value === "runninghub_overseas";
                 dialog.classList.toggle("custom", custom);
-                const local = mode.value === "local";
-                dialog.classList.toggle("local", local);
-                [provider, url, model, protocol].forEach(control => control.closest("label")?.classList.toggle("ghh3-opt-hidden", local));
-                key.closest("label")?.classList.toggle("ghh3-opt-hidden", local || assistant);
-                ruleSelect.closest("label")?.classList.toggle("ghh3-opt-hidden", local);
-                assistantService.closest("label")?.classList.toggle("ghh3-opt-hidden", local || !assistant);
-                assistantModel.closest("label")?.classList.toggle("ghh3-opt-hidden", local || !assistant);
-                runninghubModel.closest("label")?.classList.toggle("ghh3-opt-hidden", local || !runninghub);
-                model.closest("label")?.classList.toggle("ghh3-opt-hidden", local || !custom);
-                url.closest("label")?.classList.toggle("ghh3-opt-hidden", local || !custom);
-                protocol.closest("label")?.classList.toggle("ghh3-opt-hidden", local || !custom);
-                [localModel, localDevice, refreshModels].forEach(control => (control.closest("label") || control).classList.toggle("ghh3-opt-hidden", !local));
-                const gguf = selectedLocalModel()?.format === "gguf";
-                localMmproj.closest("label")?.classList.toggle("ghh3-opt-hidden", !local || !gguf);
-                dependencyStatus.classList.toggle("ghh3-opt-hidden", !local || !dependencyStatus.textContent);
+                key.closest("label")?.classList.toggle("ghh3-opt-hidden", assistant);
+                assistantService.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
+                assistantModel.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
+                runninghubModel.closest("label")?.classList.toggle("ghh3-opt-hidden", !runninghub);
+                model.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
+                url.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
+                protocol.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 const preset = optimizerProviders[provider.value];
                 if (!custom) { url.value = preset.url; model.value = preset.model; protocol.value = preset.protocol; }
             };
@@ -2815,13 +2720,12 @@ function nodeColorToCss(value) {
                     fillRunninghubModels(runninghubModelsByProvider[provider.value] || [], preserve);
                 }
                 sync();
-            }); mode.addEventListener("change", sync); sync();
+            }); sync();
             provider.dataset.previousValue = provider.value;
             const actions = make("div"); actions.className = "ghh3-opt-actions";
             const cancel = make("button", {}, t("Cancel")); const save = make("button", {}, t("Save")); actions.append(cancel, save); dialog.append(actions);
             const close = () => overlay.remove(); cancel.onclick = close; overlay.addEventListener("pointerdown", event => { if (event.target === overlay) close(); });
             save.onclick = async () => {
-                const outputLanguage = language.querySelector("input:checked")?.value || "中文";
                 const preset = optimizerProviders[provider.value];
                 const assistant = provider.value === "assistant";
                 const selectedModel = assistant ? assistantModel.value
@@ -2829,7 +2733,7 @@ function nodeColorToCss(value) {
                 providerApiKeys[provider.value] = key.value;
                 providerModels[provider.value] = selectedModel;
                 normalizeMaxTokens();
-                const body = { mode: mode.value, provider: provider.value, assistant_service: assistant ? assistantService.value : "", rule: ruleSelect.value, api_url: provider.value === "custom" ? url.value : preset?.url || url.value, model: selectedModel, protocol: provider.value === "custom" ? protocol.value : preset?.protocol || protocol.value, read_media: readMedia.checked, unload_after: unloadAfter.checked, disable_thinking: disableThinking.checked, output_language: outputLanguage, local_model: localModel.value, local_mmproj: localMmproj.value, local_device: localDevice.value, max_tokens: Number(maxTokens.value), auto_optimize: autoOptimize.checked, api_keys: { ...providerApiKeys }, provider_models: { ...providerModels } };
+                const body = { provider: provider.value, assistant_service: assistant ? assistantService.value : "", rule: ruleSelect.value, api_url: provider.value === "custom" ? url.value : preset?.url || url.value, model: selectedModel, protocol: provider.value === "custom" ? protocol.value : preset?.protocol || protocol.value, read_media: readMedia.checked, unload_after: unloadAfter.checked, max_tokens: Number(maxTokens.value), auto_optimize: autoOptimize.checked, api_keys: { ...providerApiKeys }, provider_models: { ...providerModels } };
                 body.api_key = key.value;
                 body.has_api_key = !!key.value;
                 optimizerSettings = body; refreshOptimizerName(); refreshPromptConnection(); persistState(); close();
@@ -2948,7 +2852,7 @@ function nodeColorToCss(value) {
     }
     async function optimizerMediaPayload(specs) {
         const payload = [];
-        const runninghub = optimizerSettings?.mode !== "local" && ["runninghub", "runninghub_overseas"].includes(optimizerSettings?.provider);
+        const runninghub = ["runninghub", "runninghub_overseas"].includes(optimizerSettings?.provider);
         let runninghubImages = 0;
         let runninghubVideo = false;
         for (const spec of specs) {
@@ -2979,7 +2883,7 @@ function nodeColorToCss(value) {
             // 引导图参与签名：换了图、挪了秒数或改了用途都必须重算，不能吃旧缓存
             guides: (savedState.guides?.[brActive] || []).map(g => [g?.name || "", Number(g?.seconds) || 0, String(g?.note || "")]),
             media: specs.map(spec => [spec.slot, spec.kind, spec.label, (media.get(spec.slot) || guideEntryFromSlot(spec.slot))?.name || "", !!media.get(spec.slot)?.muted]),
-            settings: optimizerSettings && [optimizerSettings.mode, optimizerSettings.provider, optimizerSettings.assistant_service, optimizerSettings.rule, optimizerSettings.api_url, optimizerSettings.model, optimizerSettings.protocol, optimizerSettings.local_model, optimizerSettings.local_mmproj, optimizerSettings.local_device, optimizerSettings.read_media, optimizerSettings.output_language],
+            settings: optimizerSettings && [optimizerSettings.provider, optimizerSettings.assistant_service, optimizerSettings.rule, optimizerSettings.api_url, optimizerSettings.model, optimizerSettings.protocol, optimizerSettings.read_media, optimizerSettings.unload_after, optimizerSettings.max_tokens],
         });
     }
     function optimizerTaskContext(specs, mode = state.mode, audioMode = widget(node, "audio_mode")?.value || "native") {
@@ -3100,9 +3004,7 @@ function nodeColorToCss(value) {
         try {
             await loadOptimizerSettings();
             if (automatic && !optimizerSettings?.auto_optimize) return false;
-            const local = optimizerSettings?.mode === "local";
-            if (local && workflowRunning) return false;
-            if ((local && !optimizerSettings?.local_model) || (!local && optimizerSettings?.provider !== "assistant" && !optimizerSettings?.has_api_key)) {
+            if (optimizerSettings?.provider !== "assistant" && !optimizerSettings?.has_api_key) {
                 if (!automatic) showOptimizerConfigPrompt();
                 return false;
             }

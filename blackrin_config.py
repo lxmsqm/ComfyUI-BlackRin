@@ -238,7 +238,11 @@ def merged_services() -> list[dict]:
 
 
 def merged_rules(kind: str) -> list[dict]:
-    """自己的 + 小助手的规则；同名以自己为准。"""
+    """自己的 + 小助手的规则；同名以自己为准。
+
+    自己的规则不按内容长度过滤——用户手写的短规则（比如一句话的风格提示）
+    也是有效规则，只有小助手那份迁移数据才需要剔除废条目。
+    """
     if kind not in RULE_KINDS:
         raise ValueError(f"未知的规则类型: {kind}")
     own = load_own()
@@ -247,7 +251,7 @@ def merged_rules(kind: str) -> list[dict]:
     for rule in own["rules"][kind]:
         name = str(rule.get("name") or "").strip()
         content = str(rule.get("content") or "").strip()
-        if not name or len(content) < MIN_RULE_CHARS or rule.get("enabled") is False:
+        if not name or not content or rule.get("enabled") is False:
             continue
         seen.add(name)
         out.append({

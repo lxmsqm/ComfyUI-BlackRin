@@ -575,7 +575,14 @@ export async function openBlackRinConfig(initialTab = "services") {
         }
         ownRules.forEach(rule => {
             const row = make("div", "bc-li");
-            row.append(make("div", "bc-li-name", String(rule.name || "（未命名）")));
+            const ruleName = String(rule.name || "").trim();
+            const ruleBody = String(rule.content || "").trim();
+            // 后端把「名称为空」或「内容为空」的规则排除在下拉之外。这里当场
+            // 标出来，否则用户改完只看到列表还在、下拉却找不到这条。
+            const missing = !ruleName ? "名称为空" : !ruleBody ? "内容为空" : "";
+            if (missing) row.classList.add("warn");
+            row.append(make("div", "bc-li-name",
+                missing ? `${ruleName || "（未命名）"} · ${missing}，不会生效` : (ruleName || "（未命名）")));
             const ops = make("div", "bc-li-ops");
             const sw = make("label", "bc-switch");
             const box = make("input");
@@ -648,7 +655,18 @@ export async function openBlackRinConfig(initialTab = "services") {
         setStatus("保存中…");
         try {
             snapshot = await putConfig(own);
-            setStatus("已保存（节点下拉下次打开时刷新）");
+            // 后端会把空内容的规则排除在合并视图外，保存后必须重新拉一次
+            // 快照，否则列表还停在保存前的样子（改完看着没生效）。
+            own.services = clone(snapshot.own.services);
+            own.rules = clone(snapshot.own.rules);
+            readonlyView = null;
+            const total = own.rules[activeRuleKind].length;
+            const usable = (snapshot.merged.rules[activeRuleKind] || [])
+                .filter(r => !r.readonly).length;
+            setStatus(usable === total
+                ? `已保存（${usable} 条规则已生效，节点下拉下次打开时刷新）`
+                : `已保存：${usable}/${total} 条生效，${total - usable} 条名称为空或内容为空，不会出现在下拉里`);
+            render();
         } catch (error) {
             setStatus(String(error.message || error));
         }

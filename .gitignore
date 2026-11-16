@@ -11,3 +11,6 @@ served_check.js
 *.zip
 *.7z
 .vscode/
+
+*.bak-*
+*.bak

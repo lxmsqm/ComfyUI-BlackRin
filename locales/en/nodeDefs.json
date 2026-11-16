@@ -14,7 +14,7 @@
       "aspect": {
         "name": "aspect ratio",
         "options": {
-          "adaptive": "adaptive",
+          "adaptive": "follow video",
           "16:9": "16:9",
           "9:16": "9:16",
           "3:2": "3:2",
@@ -39,6 +39,9 @@
       },
       "upscale_megapixels": {
         "name": "Upscale megapixels"
+      },
+      "unet_name": {
+        "name": "main model"
       }
     },
     "outputs": {
@@ -56,40 +59,85 @@
     },
     "outputs": {
       "0": {
-        "name": "positive"
+        "name": "model"
       },
       "1": {
-        "name": "AV latent"
+        "name": "positive"
       },
       "2": {
-        "name": "video VAE"
+        "name": "AV latent"
       },
       "3": {
-        "name": "audio VAE"
+        "name": "video VAE"
       },
       "4": {
-        "name": "model number"
+        "name": "audio VAE"
       },
       "5": {
-        "name": "mux audio"
-      },
-      "6": {
-        "name": "is original audio"
-      },
-      "7": {
         "name": "upscale_width"
       },
-      "8": {
+      "6": {
         "name": "upscale_height"
       },
-      "9": {
+      "7": {
         "name": "total_frames"
       },
-      "10": {
+      "8": {
         "name": "trims"
       },
-      "11": {
+      "9": {
         "name": "upscale conditioning"
+      }
+    }
+  },
+  "BlackRin_H3Migration": {
+    "display_name": "BlackRin H3 Migration",
+    "inputs": {
+      "clip_name": {
+        "name": "CLIP model"
+      },
+      "video_vae_name": {
+        "name": "video VAE"
+      },
+      "audio_vae_name": {
+        "name": "audio VAE"
+      },
+      "aspect": {
+        "name": "aspect ratio (follows video by default)",
+        "options": {
+          "adaptive": "follow video",
+          "16:9": "16:9",
+          "9:16": "9:16",
+          "3:2": "3:2",
+          "2:3": "2:3",
+          "4:3": "4:3",
+          "3:4": "3:4",
+          "1:1": "1:1",
+          "21:9": "21:9"
+        }
+      },
+      "megapixels": {
+        "name": "megapixels"
+      },
+      "prompt_override": {
+        "name": "prompt"
+      },
+      "spec_override": {
+        "name": "spec"
+      },
+      "duration_seconds": {
+        "name": "duration (seconds)"
+      },
+      "upscale_megapixels": {
+        "name": "Upscale megapixels"
+      },
+      "unet_name": {
+        "name": "main model"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": ">"
       }
     }
   }

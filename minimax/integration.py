@@ -7,8 +7,10 @@ diffusion model remains an external input in the downstream sampler.
 from __future__ import annotations
 
 import os
+import dataclasses
 import json
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,6 +21,7 @@ import nodes
 import torch
 import comfy.model_management as model_management
 import comfy.samplers
+import comfy.sd
 from comfy_api.latest import io
 from comfy_api.latest._input_impl import VideoFromFile
 from comfy_extras import nodes_audio
@@ -27,6 +30,7 @@ from .conditioning import build_conditioning
 from .core import FPS, align_frame_count, align_frame_count_down, video_latent_t
 from .multi_segment import DEFAULT_PIN_FRAMES, frames_for_tokens, sample_multi_segment
 from . import prompt_optimizer  # noqa: F401  (registers optimizer routes on import)
+from . import video_tools  # noqa: F401  (registers reference-video compress route on import)
 
 
 NODE_CATEGORY = "BlackRin/MiniMax H3"
@@ -45,6 +49,8 @@ ASPECTS = {
 DEFAULT_CLIP = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 DEFAULT_VIDEO_VAE = "minimax_h3_video_vae_fp16.safetensors"
 DEFAULT_AUDIO_VAE = "minimax_h3_audio_vae_fp32.safetensors"
+# 主模型默认优先挑这两个 H3 底模（找到哪个用哪个），否则用列表第一个。
+DEFAULT_UNET_HINTS = ("FeiHou_MiniMax-H3_Remix", "viggle_remake", "DasiwaMinimaxH3")
 
 
 def _uploaded_media(name, tooltip=None, hidden=False):
@@ -269,7 +275,105 @@ def _serialized_media_numbers(gh_state_json, key, minimum, maximum):
 
 
 def _default_model(options, preferred):
-    return preferred if preferred in options else (options[0] if options else None)
+    """挑默认模型文件：先精确命中，再按文件名相似度兜底。
+
+    原来的实现只在名字完全一致时命中；本机装的是别的量化版本
+    （例如 int4_convrot 而不是 nvfp4_awq）时会静默落回列表第一项——
+    CLIP 列表第一项是 LTX 文本投影、VAE 列表第一项是 Krea2 的图像 VAE，
+    直接开跑就是错的型号。这里改成按 token 重叠 + 公共前缀打分。
+    """
+    if not options:
+        return None
+    if preferred in options:
+        return preferred
+
+    def stem(value):
+        name = os.path.basename(str(value).replace("\\", "/")).lower()
+        return os.path.splitext(name)[0]
+
+    def tokens(value):
+        return {t for t in re.split(r"[^a-z0-9]+", stem(value)) if t}
+
+    want_stem = stem(preferred)
+    want_tokens = tokens(preferred)
+    best, best_score = options[0], -1
+    for option in options:
+        option_stem = stem(option)
+        shared = len(want_tokens & tokens(option))
+        prefix = 0
+        for left, right in zip(want_stem, option_stem):
+            if left != right:
+                break
+            prefix += 1
+        score = shared * 10 + prefix
+        if option_stem == want_stem:
+            score += 1000
+        if score > best_score:
+            best, best_score = option, score
+    return best if best_score > 0 else options[0]
+
+
+_UNET_FAMILY_HINTS = ("minimax_h3", "minimax-h3", "viggle")
+
+
+def _diffusion_models():
+    """diffusion_models 下的全部底模（不过滤，按用户要求全量列出）。"""
+    return [m.replace("/", "\\") for m in folder_paths.get_filename_list("diffusion_models")]
+
+
+def _unet_options():
+    return _diffusion_models()
+
+
+def _default_unet(options):
+    """默认选 H3 家族里第一个命中的底模（FeiHou Remix → viggle remake → Dasiwa）。"""
+    for hint in DEFAULT_UNET_HINTS:
+        for opt in options:
+            if hint in opt:
+                return opt
+    return options[0] if options else ""
+
+
+def _normalize_model_name(name):
+    """工作流里可能残留 Windows 反斜杠（Minimax_h3_image\\xxx.safetensors），
+    Linux 侧 folder_paths 只认正斜杠，这里统一归一。"""
+    name = str(name or "").strip()
+    if not name or name == "(none)":
+        return ""
+    return name.replace("\\", "/")
+
+
+def _model_path(folder, name):
+    """解析模型文件全路径；正斜杠失败时按 basename 兜底匹配（大小写不敏感）。"""
+    normalized = _normalize_model_name(name)
+    if not normalized:
+        raise ValueError(f"BlackRin：模型名为空（{folder}）。")
+    try:
+        return folder_paths.get_full_path_or_raise(folder, normalized)
+    except Exception:
+        target = os.path.basename(normalized).lower()
+        for candidate in folder_paths.get_filename_list(folder):
+            if os.path.basename(candidate).lower() == target:
+                logging.info("BlackRin 模型名兜底匹配：%s → %s", name, candidate)
+                return folder_paths.get_full_path_or_raise(folder, candidate)
+        raise
+
+
+def _load_main_unet(unet_name):
+    """按节点上选的主模型加载 H3 底模（等价于 UNETLoader 的 default 精度）。
+
+    编码完成后才调用，避免文本编码器和底模同时占显存。
+    """
+    name = _normalize_model_name(unet_name)
+    if not name:
+        raise ValueError("BlackRin：没有选择主模型（unet_name 为空），请在一体化节点顶部下拉里选一个 H3 底模。")
+    path = _model_path("diffusion_models", name)
+    started = time.perf_counter()
+    model = comfy.sd.load_diffusion_model(path, model_options={})
+    logging.info(
+        "BlackRin 主模型已加载：%s（%.1fs）", name, time.perf_counter() - started
+    )
+    return model
 
 
 def _release_text_encoder(clip) -> None:
@@ -309,7 +413,11 @@ def _round32(value: float) -> int:
     return max(32, int(value / 32 + 0.5) * 32)
 
 
+_ASPECT_ALIASES = {"按视频宽高比": "adaptive", "按视频宽高": "adaptive", "自适应": "adaptive"}
+
+
 def calculate_canvas(aspect: str, megapixels: float, source_width=None, source_height=None):
+    aspect = _ASPECT_ALIASES.get(aspect, aspect)
     ratio = ASPECTS.get(aspect, ASPECTS["16:9"])
     if ratio is None:
         try:
@@ -474,6 +582,15 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
             category=NODE_CATEGORY,
             description="Integrated MiniMax H3 conditioning input. The diffusion model remains external.",
             inputs=[
+                # 主模型（H3 底模）选择。放在输入最顶端，画布上就在 CLIP 模型之上。
+                # 选中后节点内部加载底模，由适配器的「主模型」出口直接接采样器。
+                # 注意：节点总会加载所选底模，画布上若还留着 UNETLoader 就会重复加载一遍。
+                io.Combo.Input(
+                    "unet_name",
+                    display_name="主模型",
+                    options=_unet_options(),
+                    default=_default_unet(_unet_options()),
+                ),
                 _hidden_combo("main_mode", ["text_keyframes", "all_reference"], "text_keyframes"),
                 io.Combo.Input(
                     "clip_name",
@@ -491,7 +608,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                     default=_default_model(folder_paths.get_filename_list("vae"), DEFAULT_AUDIO_VAE),
                 ),
                 io.Combo.Input("aspect", options=list(ASPECTS), default="adaptive"),
-                io.Float.Input("megapixels", default=0.5, min=0.2, max=2.0, step=0.1, round=0.1),
+                io.Float.Input("megapixels", default=0.5, min=0.1, max=2.0, step=0.1, round=0.1),
                 io.Int.Input(
                     "duration_seconds",
                     default=5,
@@ -550,10 +667,10 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                 io.Float.Input(
                     "upscale_megapixels",
                     default=1.0,
-                    min=0.1,
-                    max=10.0,
+                    min=0.9,
+                    max=16.0,
                     step=0.1,
-                    tooltip="Second-stage target megapixels, 0.1 to 10. The "
+                    tooltip="Second-stage target megapixels, 0.9 to 16. The "
                             "aspect ratio always follows the first stage. Must "
                             "not be below the first-stage megapixels.",
                 ),
@@ -577,7 +694,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                 task_type, audio_mode, audio_denoise_strength,
                 drive_audio_ordinal, ref_image_scale, ref_image_size,
                 gh_state_json="", prompt_override=None,
-                upscale_megapixels=1.0, segments_json=""):
+                upscale_megapixels=1.0, segments_json="", unet_name=""):
         # ComfyUI can replay an older hidden-widget snapshot as the literal
         # string "(none)". T8 treats this control as an int, with 0 disabling
         # remapping, so normalize it before calling the shared conditioning.
@@ -826,7 +943,6 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                     except (TypeError, ValueError):
                         gh_state = {}
                     fps = max(1, int(gh_state.get("fps") or 24)) if isinstance(gh_state, dict) else 24
-                    group_guides_cfg = _serialized_group_guides(gh_state_json)
                     # lock_source 需要驱动音频覆盖全片：在编码前先把总账算清，
                     # 免得烧完几十秒编码才在某一组报 "requires drive_audio"。
                     if audio_mode == "lock_source" and internal_drive_audio is not None:
@@ -892,17 +1008,6 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                             paired = reference_video_audio(video_index, soundtrack, window)
                             if paired is not None:
                                 seg_video_audios[f"ref_video_audio_{video_index}"] = paired
-                        # 本组的中段引导图：组内秒数 → 采样 latent 里的像素帧号。
-                        # 第 2 组起的 latent 头部有 pin 帧（接续引导，导出时会被裁掉），
-                        # 所以引导图要加上 head 偏移，否则会锚进被裁掉的那段里。
-                        group_guides = []
-                        for name, seconds in group_guides_cfg.get(index, ()):
-                            guide = _load_image_file(name)
-                            if guide is None:
-                                continue
-                            frame_idx = int(round(min(seconds, group_seconds) * fps))
-                            frame_idx = min(max(0, frame_idx), visible - 1) + pin
-                            group_guides.append((guide, frame_idx))
                         seg_kwargs = {
                             "task_type": "auto",
                             "audio_mode": audio_mode,
@@ -920,7 +1025,6 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                             "ref_videos": seg_videos,
                             "ref_video_audios": seg_video_audios,
                             "ref_audios": audios,
-                            "guide_images": group_guides,
                         }
                         _t_enc = time.perf_counter()
                         result = build_conditioning(
@@ -946,7 +1050,13 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                         str(g.get("prompt") or "").strip() for g in groups
                     ).strip() or groups[0]["prompt"]
                     joined_prompt = _prepend_trigger_words(joined_prompt, trigger_words)
-                    upscale_mode = str(gh_state.get("upscale_mode") or "merge")
+                    # 二采条件固定「首段」：合并剧本实测无必要（首段条件不漂移，
+                    # 还省一次全组提示词的长文本编码）。老工作流残留的 merge 值
+                    # 在这里一并归一到 first。
+                    upscale_mode = str(gh_state.get("upscale_mode") or "first")
+                    if upscale_mode != "first":
+                        logging.info("BlackRin 多段：二采条件已固定为首段，忽略 upscale_mode=%s", upscale_mode)
+                        upscale_mode = "first"
                     up_kwargs = dict(seg_kwargs)
                     up_kwargs["drive_audio"] = None
                     up_kwargs["final_audio"] = None
@@ -976,43 +1086,41 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                         "BlackRin 多段条件编码完成：%d 组（合计 %d 帧 ≈ %.1f 秒 @24fps）",
                         len(groups), total_visible, total_visible / 24.0,
                     )
+                    _release_text_encoder(clip)
+                    clip = None
+                    main_model = _load_main_unet(unet_name)
                     bundle = {
                         "internal": True,
                         "conditionings": conditionings,
                         "av_latents": av_latents,
                         "trims": trims,
                         "video_vae": video_vae, "audio_vae": audio_vae,
-                        "models_number": _mode_model_number(main_mode),
-                        "mux_audio": None, "is_original_audio": is_original_audio,
                         "upscale_width": upscale_width, "upscale_height": upscale_height,
                         "total_frames": total_visible,
                         "upscale_positive": up_positive,
+                        "unet_name": unet_name,
+                        "model": main_model,
                     }
                     return io.NodeOutput(bundle)
-            single_guides = []
-            for name, seconds in _serialized_group_guides(gh_state_json).get(0, ()):
-                guide = _load_image_file(name)
-                if guide is None:
-                    continue
-                single_guides.append((guide, min(int(round(seconds * 24)), length - 1)))
             result = build_conditioning(
                 clip, video_vae, audio_vae, _prepend_trigger_words(prompt, trigger_words),
                 width, height, length,
                 "auto", audio_mode, audio_denoise_strength, True,
                 ref_image_size, ref_image_scale, internal_drive_audio, final_audio,
                 first, last, refs, ref_videos, video_audio, audios,
-                guide_images=single_guides,
             )
         finally:
             _release_text_encoder(clip)
             clip = None
+        main_model = _load_main_unet(unet_name)
         bundle = {
-            "positive": result[0], "av_latent": result[1], "mux_audio": result[2],
+            "positive": result[0], "av_latent": result[1],
             "video_vae": video_vae, "audio_vae": audio_vae,
             "width": width, "height": height, "length": length,
             "duration_seconds": duration_seconds, "resolved_mode": main_mode,
-            "is_original_audio": is_original_audio,
             "upscale_width": upscale_width, "upscale_height": upscale_height,
+            "unet_name": unet_name,
+            "model": main_model,
         }
         return io.NodeOutput(bundle)
 
@@ -1037,42 +1145,6 @@ def _prepend_trigger_words(prompt: str, trigger_words: str) -> str:
         return prompt
     return f"{trigger_words}\n{prompt}" if prompt else trigger_words
 
-
-def _serialized_group_guides(gh_state_json):
-    """每组的「中段引导图」：{组下标: [(文件名, 组内秒数), ...]}。
-
-    前端存在 gh_state.guides 里；组内秒数在调用端换算成绝对像素帧号。
-    """
-    if not gh_state_json or gh_state_json == "(none)":
-        return {}
-    try:
-        state = json.loads(gh_state_json)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    raw = state.get("guides") if isinstance(state, dict) else None
-    if not isinstance(raw, dict):
-        return {}
-    out = {}
-    for key, items in raw.items():
-        try:
-            group_index = int(key)
-        except (TypeError, ValueError):
-            continue
-        entries = []
-        for item in items if isinstance(items, list) else []:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            try:
-                seconds = float(item.get("seconds") or 0)
-            except (TypeError, ValueError):
-                continue
-            entries.append((name, max(0.0, seconds)))
-        if entries:
-            out[group_index] = entries
-    return out
 
 
 def _parse_prompt_groups(segments_json: str) -> list[dict]:
@@ -1101,9 +1173,13 @@ class BlackRin_MiniMaxH3Adapter(io.ComfyNode):
             category=NODE_CATEGORY,
             inputs=[io.Custom("MiniMax").Input("integration", display_name="<")],
             outputs=[
+                io.Model.Output(
+                    "model",
+                    display_name="主模型",
+                    tooltip="一体化节点内部按「主模型」下拉选好的 H3 底模，直接接到采样器。",
+                ),
                 io.Conditioning.Output("positive"), io.Latent.Output("av_latent"),
-                io.Vae.Output("video_vae"), io.Vae.Output("audio_vae"), io.Int.Output("models number"),
-                io.Audio.Output("mux_audio"), io.Boolean.Output("is_original_audio"),
+                io.Vae.Output("video_vae"), io.Vae.Output("audio_vae"),
                 io.Int.Output(
                     "upscale_width",
                     tooltip="Second-stage target width; equals the first-stage width while upscale is off.",
@@ -1138,11 +1214,10 @@ class BlackRin_MiniMaxH3Adapter(io.ComfyNode):
             # ✨ BlackRin 多段采样 在画布原采样位置接手做段间接续采样；
             # 其余出口（VAE 等）照常供解码/二采链使用。
             return io.NodeOutput(
+                integration.get("model"),
                 integration.get("conditionings"),
                 integration.get("av_latents"),
                 integration.get("video_vae"), integration.get("audio_vae"),
-                integration.get("models_number"),
-                integration.get("mux_audio"), integration.get("is_original_audio"),
                 integration.get("upscale_width"), integration.get("upscale_height"),
                 integration.get("total_frames"),
                 integration.get("trims"),
@@ -1151,10 +1226,9 @@ class BlackRin_MiniMaxH3Adapter(io.ComfyNode):
         first_width = int(integration.get("width") or 0)
         first_height = int(integration.get("height") or 0)
         return io.NodeOutput(
+            integration.get("model"),
             integration["positive"], integration["av_latent"],
             integration["video_vae"], integration["audio_vae"],
-            _mode_model_number(integration.get("resolved_mode")),
-            integration["mux_audio"], bool(integration.get("is_original_audio", False)),
             int(integration.get("upscale_width") or first_width),
             int(integration.get("upscale_height") or first_height),
             int(integration.get("length") or 0),
@@ -1218,3 +1292,56 @@ class BlackRin_MultiSegmentSampler(io.ComfyNode):
             model=model, sigmas=sigmas, seed=seed, sampler_obj=sampler,
         )
         return io.NodeOutput(latents_out, "\n".join(reports))
+
+class BlackRin_H3Migration(BlackRin_MiniMaxH3Integration):
+    """迁移一体化：人物/动作迁移专用入口（等价一体化 + 比例提示）。
+
+    宽高比下拉照常生效；默认值在界面上直接显示为「按视频宽高比」，
+    选它就会按第一个视觉素材（Ref2VA 下视频优先于图片）的原始宽高比
+    计算画布，避免超宽素材被硬塞竖屏后人物两侧被裁、动作对不上。
+    选其它比例时只写一条日志提醒，不拦截——需要出竖屏/方形版本时照样能用。
+
+    刻意用子类而不是复制一份代码：只覆盖 execute 的 aspect 这一个入参，
+    其余（多段时间条、参考素材、音频模式、二采尺寸……）全部走父类，
+    父类以后升级这里自动跟着变，不会出现两份代码各改各的。
+    """
+
+    NODE_ID = "BlackRin_H3Migration"
+    NODE_TITLE = "✨ 迁移一体化"
+
+    @classmethod
+    def define_schema(cls):
+        # 父类 schema 的 node_id 是 BlackRin_MiniMaxH3Integration，直接继承会让
+        # 两个节点抢同一个 id；io.Schema 是 dataclass，replace 一份只换 id 和标题，
+        # inputs/outputs 原样复用（控件、默认值、隐藏位全部跟父类保持一致）。
+        base = super().define_schema()
+        return dataclasses.replace(
+            base,
+            node_id=cls.NODE_ID,
+            display_name=cls.NODE_TITLE,
+            description="迁移一体化：默认「按视频宽高比」跟随上传视频，比例下拉照常可用。",
+        )
+
+    @classmethod
+    def execute(cls, main_mode, aspect, megapixels, duration_seconds, clip_name, video_vae_name, audio_vae_name,
+                prompt, first_frame, last_frame, hybrid_audio, ref_image_1, ref_image_2, ref_image_3,
+                ref_image_4, ref_image_5, ref_image_6, ref_image_7, ref_image_8, ref_image_9,
+                ref_video_1, ref_video_2, ref_video_3, ref_audio_1, ref_audio_2, ref_audio_3,
+                task_type, audio_mode, audio_denoise_strength,
+                drive_audio_ordinal, ref_image_scale, ref_image_size,
+                gh_state_json="", prompt_override=None,
+                upscale_megapixels=1.0, segments_json="", unet_name=""):
+        if aspect not in (None, "", "adaptive"):
+            logging.info(
+                "BlackRin 迁移一体化：使用手动宽高比 %s；参考视频比例不同时画面会被裁切，"
+                "建议选「按视频宽高比」让比例跟随素材。", aspect
+            )
+        return super().execute(
+            main_mode, aspect, megapixels, duration_seconds, clip_name, video_vae_name, audio_vae_name,
+            prompt, first_frame, last_frame, hybrid_audio, ref_image_1, ref_image_2, ref_image_3,
+            ref_image_4, ref_image_5, ref_image_6, ref_image_7, ref_image_8, ref_image_9,
+            ref_video_1, ref_video_2, ref_video_3, ref_audio_1, ref_audio_2, ref_audio_3,
+            task_type, audio_mode, audio_denoise_strength,
+            drive_audio_ordinal, ref_image_scale, ref_image_size,
+            gh_state_json, prompt_override, upscale_megapixels, segments_json, unet_name,
+        )

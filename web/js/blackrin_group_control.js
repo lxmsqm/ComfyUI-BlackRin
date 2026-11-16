@@ -104,10 +104,17 @@ function groupMembers(group) {
 }
 
 function applyGroupState(groupTitle, state) {
-    const group = (app.graph.groups || []).find(g => g.title === groupTitle);
-    if (!group) return;
-    for (const node of groupMembers(group)) {
-        node.mode = STATE_MODES[state] ?? 0;
+    // 同名分组可能不止一个（用户复制分组会得到同名副本）：面板是按"标题"操作的，
+    // 所以这里必须命中全部同名分组，否则复制出来的那一组永远不会被启用/屏蔽。
+    const matched = (app.graph.groups || []).filter(g => g.title === groupTitle);
+    if (!matched.length) return;
+    const seen = new Set();
+    for (const group of matched) {
+        for (const node of groupMembers(group)) {
+            if (seen.has(node.id)) continue;
+            seen.add(node.id);
+            node.mode = STATE_MODES[state] ?? 0;
+        }
     }
     app.graph.setDirtyCanvas(true, true);
 }
@@ -269,10 +276,14 @@ app.registerExtension({
                         parent.appendChild(btn);
                     };
 
-                    const bound = new Set(pairs.flatMap(p => [...p.a, ...p.b]));
+                    // 只有"引用的组全都存在"的绑定才算数。
+                    // 老实现用全部 pairs 算 bound：绑定里一旦残留已改名/已删除的组名，
+                    // 这条绑定会被静默跳过，但它占用的组名仍算"已绑定"，
+                    // 于是现存同名组（例如另一处也叫「二采」的组）会在面板上整行消失。
+                    const livePairs = pairs.filter(p => [...p.a, ...p.b].every(t => groups.includes(t)));
+                    const bound = new Set(livePairs.flatMap(p => [...p.a, ...p.b]));
                     // 互斥绑定：甲侧 1 组 ⇄ 乙侧 N 组，两边各一个开关
-                    for (const p of pairs) {
-                        if (![...p.a, ...p.b].every(t => groups.includes(t))) continue;
+                    for (const p of livePairs) {
                         const row = document.createElement("div");
                         row.className = "brgc-row brgc-pairrow";
                         const sideA = document.createElement("div");
@@ -305,6 +316,17 @@ app.registerExtension({
                         };
                         row.append(sideA, x, sideB, unbind);
                         container.appendChild(row);
+                    }
+                    const dupTitles = [...new Set(
+                        anchors.map(n => n.br_group_title)
+                            .filter((t, i, arr) => t && arr.indexOf(t) !== i),
+                    )];
+                    if (dupTitles.length) {
+                        const warn = document.createElement("div");
+                        warn.className = "brgc-empty";
+                        warn.style.color = "#e0a35a";
+                        warn.textContent = `⚠ 存在同名分组：${dupTitles.join("、")}（按标题统一开关，建议改名区分）`;
+                        container.appendChild(warn);
                     }
                     // 未绑定的组：普通行
                     for (const title of groups) {

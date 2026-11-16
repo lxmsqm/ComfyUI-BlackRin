@@ -377,7 +377,7 @@ def _endpoint(config: dict) -> str:
 
 
 def _node_anchor_note(context: dict, duration: float) -> str:
-    """把节点提供的锚点事实（关键帧 / 中段引导图）渲染成附加说明。
+    """把节点提供的锚点事实（关键帧）渲染成附加说明。
 
     自定义规则会整体替换内置系统提示，但"第几秒锚了哪张图"是节点事实，
     无论用哪套规则都必须告知模型，否则会写出与锚定画面冲突的提示词。
@@ -385,7 +385,6 @@ def _node_anchor_note(context: dict, duration: float) -> str:
     if not isinstance(context, dict):
         return ""
     lines: list[str] = []
-    guide_count = 0
     for item in context.get("keyframes") or []:
         if not isinstance(item, dict):
             continue
@@ -397,22 +396,6 @@ def _node_anchor_note(context: dict, duration: float) -> str:
                 else f"the exact last frame at {duration:.2f}s" if role == "exact_last_frame"
                 else "a visual keyframe anchor")
         lines.append(f"- {label} is {when}.")
-    for item in context.get("mid_guide_images") or []:
-        if not isinstance(item, dict):
-            continue
-        label = str(item.get("label") or "").strip()
-        if not label:
-            continue
-        try:
-            at_seconds = float(item.get("at_seconds") or 0)
-        except (TypeError, ValueError):
-            at_seconds = 0.0
-        note = str(item.get("note") or "").strip()
-        # 用户给这张图写的用途说明（例如"起始造型"）。它说明的是剧情语义，
-        # 不是画面内容描述，所以原样转达，让模型知道该图在叙事里代表什么。
-        role = f" ({note})" if note else ""
-        lines.append(f"- {label}{role} is pinned inside the clip at about {at_seconds:.2f}s.")
-        guide_count += 1
     if not lines:
         return ""
     return (
@@ -421,12 +404,6 @@ def _node_anchor_note(context: dict, duration: float) -> str:
         + "\nKeep the described moments consistent with what those anchored images show "
           "(subjects, wardrobe, pose, framing, lighting, style). Do not invent anchors that "
           "were not listed, and do not call them first or last frames unless stated."
-        + (" Guide frames are picture anchors pinned at fixed times, not numbered prompt labels: "
-           "describe their content in words at the stated moments and do not invent a label "
-           "for them. When several guide frames are pinned at different times they mark the "
-           "required visual progression of the timeline, so describe how the picture evolves "
-           "from one to the next at those moments."
-           if guide_count > 0 else "")
     )
 
 
@@ -514,8 +491,6 @@ def _system_prompt(
         if keyframe_lines else
         "No concrete keyframe role was supplied by the node; do not invent one."
     )
-
-    guide_rule = _node_anchor_note(context, duration).strip().replace("\n", " ")
 
     audio_mode = str(context.get("audio_mode") or "native")
     audio_rule = {
@@ -668,7 +643,7 @@ def _system_prompt(
         "information. Do not create labels outside the supplied label list, renumber labels, "
         "or replace labels with filenames. "
         f"Task={task}; duration={duration:.2f}s; available labels={', '.join(labels) or 'none'}. "
-        f"{label_rule} {keyframe_rule} {guide_rule} {audio_rule} {structure}{singing_rule}{transfer_rule} {dialogue_rule} "
+        f"{label_rule} {keyframe_rule} {audio_rule} {structure}{singing_rule}{transfer_rule} {dialogue_rule} "
         f"{subject_shorthand_rule} "
         "Audio items are label-only references; never claim you listened to them. Before returning, silently check "
         "that every required section is present in the correct order, every used label exists, no filename appears, "
@@ -677,17 +652,33 @@ def _system_prompt(
     )
 
 
-def _output_language_mandate() -> str:
-    """追加在用户消息末尾的语言硬性要求——模型对提示词末尾的权重最高。"""
+def _output_language_mandate(has_rule: bool = False) -> str:
+    """追加在用户消息末尾的语言硬性要求——模型对提示词末尾的权重最高。
+
+    选了规则时语言由规则自己定（例如 Viggle Remake 规则要求整份英文成品），
+    这里只做兜底：规则没规定语言才要求简体中文。
+    """
+    if has_rule:
+        return (
+            "\n\n【输出语言（最高优先级，覆盖其他一切指令）】\n"
+            "输出语言以系统提示中规则的明确规定为准；规则没有明确规定语言时，全部使用简体中文撰写。"
+            "无论规则要求哪种语言，以下内容一律保留英文原样：固定字段名（subject_definitions、summary、"
+            "retention_analysis、detailed_description、integrated_multimodal_description、overall_soundscape、"
+            "non_diegetic_music）、媒体与主体标签（<Picture 1>、<Video 1>、<Subject 1>、<Audio 1>）、"
+            "[Shot N] 标记、MM:SS.mmm 时间戳、"
+            "fully_preserved / partially_preserved / attribute_transfer / weak_reference / removed / added / "
+            "fully_copy / partially_copy / reference 等固定关系标记、以及文件名。"
+            "除规则明确要求外，不得输出任何解释、前言、后记或自检报告。"
+        )
     return (
         "\n\n【输出语言硬性要求（最高优先级，覆盖其他一切指令）】\n"
         "最终结果必须全部使用简体中文撰写。任何英文句子、英文短语或英文单词的出现都视为任务失败——"
         "返回前必须逐句自查，把所有英文自然语言改写为简体中文。"
         "仅以下内容允许保留英文原样：固定字段名（subject_definitions、summary、retention_analysis、"
         "detailed_description、integrated_multimodal_description、overall_soundscape、non_diegetic_music）、"
-        "媒体与主体标签（<Picture 1>、<Video 1>、<Audio 1>）、[Shot N] 标记、"
-        "fully_preserved / partially_preserved / attribute_transfer / weak_reference / fully_copy / "
-        "partially_copy / reference 等固定关系标记、以及文件名。"
+        "媒体与主体标签（<Picture 1>、<Video 1>、<Subject 1>、<Audio 1>）、[Shot N] 标记、MM:SS.mmm 时间戳、"
+        "fully_preserved / partially_preserved / attribute_transfer / weak_reference / removed / added / "
+        "fully_copy / partially_copy / reference 等固定关系标记、以及文件名。"
     )
 
 
@@ -696,21 +687,11 @@ def _user_parts(prompt: str, media: list[dict], read_media: bool) -> list[dict]:
     for item in media:
         label = str(item.get("label") or "")
         kind = str(item.get("kind") or "")
-        try:
-            at_seconds = float(item.get("guide_seconds"))
-        except (TypeError, ValueError):
-            at_seconds = None
         if kind == "audio":
             parts.append({"type": "text", "text": f"{label} is an uploaded audio reference (content not transmitted)."})
         elif read_media:
             for index, data_url in enumerate(item.get("images") or []):
-                if at_seconds is not None:
-                    # 引导图：只做画面锚点，不是提示词标签——必须明说，否则模型会编造标签
-                    parts.append({"type": "text", "text":
-                        f"{label} is a picture anchor pinned at {at_seconds:.2f}s in the target video; "
-                        "it is NOT a numbered prompt label. Describe its visible content in words at that moment."})
-                else:
-                    parts.append({"type": "text", "text": f"{label} visual {index + 1}."})
+                parts.append({"type": "text", "text": f"{label} visual {index + 1}."})
                 parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "low"}})
         else:
             parts.append({"type": "text", "text": f"{label} is an uploaded {kind} reference."})
@@ -936,6 +917,86 @@ def _extract_openai_responses(data: dict) -> str:
     raise RuntimeError("OpenAI Responses returned no optimized prompt")
 
 
+_TASK_NOTE = {
+    "t2va": "纯文本生视频（无源视频，无参考图）",
+    "i2va": "单图生视频（首帧）",
+    "l2va": "末帧生视频",
+    "fl2va": "首尾帧生视频",
+    "ref2va": "全能参考（源视频 + 参考图 / 关键帧）",
+    "hybrid": "混合参考（源视频 + 参考图 + 音频）",
+    "auto": "由节点自动判定",
+}
+
+_AUDIO_NOTE = {
+    "native": "模型自行生成音频；不得声称复制了上传音频",
+    "lock_source": "源视频音轨原样搬运，不新增任何声音、对白或音乐",
+    "reference_only": "源音频只作音色/节奏参考，不复制",
+    "remix_source": "在源音频基础上重新混音",
+}
+
+
+def _pretty_label(label: str) -> str:
+    """`<picture 3>` → `<Picture 3>`，与官方写法一致。"""
+    text = str(label or "").strip()
+    low = text.lower()
+    for key, pretty in (("picture", "Picture"), ("video", "Video"), ("audio", "Audio")):
+        if low.startswith(f"<{key}"):
+            number = "".join(ch for ch in text if ch.isdigit()) or "1"
+            return f"<{pretty} {number}>"
+    return text
+
+
+def _stamp(seconds: float) -> str:
+    """秒 → `MM:SS.mmm`。"""
+    value = max(0.0, float(seconds))
+    minutes = int(value // 60)
+    return f"{minutes:02d}:{value - minutes * 60:06.3f}"
+
+
+def _node_facts_note(payload: dict, context: dict) -> str:
+    """规则模式下的节点事实注入。
+
+    自定义规则会整体替换内置系统提示，但"任务类型/时长/可用标签/音频怎么处理"
+    是节点事实：不说清楚，模型就写不出落在时长内的时间戳，也不知道有哪些标签能用。
+    """
+    try:
+        duration = float(payload.get("duration") or 5)
+    except (TypeError, ValueError):
+        duration = 5.0
+    duration = max(0.5, duration)
+    frames = max(1, int(round(duration * 24)))
+    last_ts = (frames - 1) / 24.0
+    task = str(payload.get("task") or "").strip().lower() or "auto"
+    media = payload.get("media") if isinstance(payload.get("media"), list) else []
+    labels: list[str] = []
+    for item in media:
+        if not isinstance(item, dict):
+            continue
+        pretty = _pretty_label(item.get("label"))
+        if pretty and pretty not in labels:
+            labels.append(pretty)
+    context = context if isinstance(context, dict) else {}
+    audio_mode = str(context.get("audio_mode") or "").strip().lower()
+    main_mode = str(context.get("main_mode") or "").strip()
+
+    lines = [
+        f"- 任务类型 task = {task}（{_TASK_NOTE.get(task, '按用户需求判断')}）",
+        f"- 目标时长 = {duration:.2f} 秒（24fps，共 {frames} 帧）：所有 MM:SS.mmm 时间戳必须 ≤ {_stamp(duration)}，"
+        f"最后可用时间戳 {_stamp(last_ts)}，超时即无效。",
+        "- 可用标签（只能用这些，编号与上传顺序一致）：" + ("、".join(labels) if labels else "无"),
+    ]
+    if audio_mode:
+        lines.append(f"- audio_mode = {audio_mode}（{_AUDIO_NOTE.get(audio_mode, '按用户需求判断')}）")
+    if main_mode:
+        lines.append(f"- 生成模式 = {main_mode}")
+    return (
+        "\n\n【本次任务事实（优化器自动注入的内部信息，禁止复述到成品里，只用于满足格式要求）】\n"
+        + "\n".join(lines)
+        + "\n标签大小写按官方写法输出（<Picture 1>、<Video 1>、<Subject 1>）；"
+          "标签以外的内容按规则要求的语言撰写。"
+    )
+
+
 def _resolve_system_prompt(config: dict, payload: dict) -> tuple[str, bool]:
     """The system prompt for this request, and whether it came from a rule.
 
@@ -951,7 +1012,9 @@ def _resolve_system_prompt(config: dict, payload: dict) -> tuple[str, bool]:
         # 必须继续告知模型，否则它会写出与锚定画面冲突的提示词。
         context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
         anchors = _node_anchor_note(context, float(payload.get("duration") or 5))
-        return (match["content"] + anchors if anchors else match["content"]), True
+        facts = _node_facts_note(payload, context)
+        extra = facts + anchors
+        return (match["content"] + extra if extra else match["content"]), True
     task = str(payload.get("task") or "T2VA")
     duration = float(payload.get("duration") or 5)
     media = payload.get("media") if isinstance(payload.get("media"), list) else []
@@ -971,7 +1034,7 @@ def _request_parts(config: dict, payload: dict):
     user_prompt = str(payload.get("prompt") or "")
     system, _custom = _resolve_system_prompt(config, payload)
     parts = _user_parts(user_prompt, media, bool(config.get("read_media")))
-    parts[0]["text"] += _output_language_mandate()
+    parts[0]["text"] += _output_language_mandate(_custom)
     max_tokens = _clamp_max_tokens(config.get("max_tokens"))
     headers = {"Content-Type": "application/json"}
     if config["protocol"] == "gemini":
@@ -1062,22 +1125,12 @@ async def _request_runninghub(config: dict, payload: dict) -> str:
                 label = str(item.get("label") or "")
                 if kind == "image":
                     images = item.get("images") or []
-                    try:
-                        at_seconds = float(item.get("guide_seconds"))
-                    except (TypeError, ValueError):
-                        at_seconds = None
                     if image_index < len(image_nodes) and images:
                         node_id = image_nodes[image_index]
                         node_values[node_id] = await _runninghub_upload(
                             session, api_key, data_url=images[0], filename=f"reference_{image_index + 1}.jpg", api_base=rh_api_base
                         )
-                        if at_seconds is not None:
-                            mapping_notes.append(
-                                f"{label} corresponds to uploaded image {image_index + 1} and is a picture anchor "
-                                f"pinned at {at_seconds:.2f}s; it is not a numbered prompt label."
-                            )
-                        else:
-                            mapping_notes.append(f"{label} corresponds to uploaded image {image_index + 1}.")
+                        mapping_notes.append(f"{label} corresponds to uploaded image {image_index + 1}.")
                         image_index += 1
                     else:
                         mapping_notes.append(f"{label} exists as an image reference label, but its visual file was not transmitted.")

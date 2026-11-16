@@ -4,8 +4,13 @@ import { api } from "/scripts/api.js";
 const OPTIMIZER_DONE_SOUND_URL = new URL("../audio/done.mp3", import.meta.url).href;
 
 const NODE = "BlackRin_MiniMaxH3Integration";
+// 迁移一体化：同一套面板与时间条，只是后端把宽高比锁死为跟随参考视频
+const NODE_MIGRATION = "BlackRin_H3Migration";
+const PANEL_NODES = [NODE, NODE_MIGRATION];
+const isPanelNode = name => PANEL_NODES.includes(name);
 const RH_NODE_IDS = [
     NODE,
+    NODE_MIGRATION,
     "BlackRin_MiniMaxH3Adapter",
 ];
 const OPTIMIZER_ROUTE = "/blackrin/minimax-h3/prompt-optimizer";
@@ -172,7 +177,7 @@ const DOM_TRANSLATIONS = {
     "Text-to-video": "文生视频",
     "First/last frames / Text-to-video": "首尾帧 / 文生视频",
     "All-purpose reference": "全能参考",
-    "Prompt:\nClick an uploaded asset to insert its tag, e.g. <picture 1>, <video 1>, or <audio 2>;\nDouble-click a video to insert its audio tag; mute a video at the top-right to exclude its audio from references": "提示词：\n单击已上传的素材自动添加标签，如：<picture 1>、<video 1>、<audio 2>；\n双击视频自动添加视频中的音频标签；视频右上角静音后音频将不传入参考",
+    "Prompt:\nClick an uploaded asset to insert its tag, e.g. <picture 1>, <video 1>, or <audio 2>;\nDouble-click a video to insert its audio tag; mute a video at the top-right to exclude its audio from references": "提示词：\n单击已上传的素材插入标签，如：<picture 1>、<video 1>、<audio 2>；\n双击缩略图可更换该素材；右键视频缩略图插入视频中的音频标签；视频右上角静音后音频将不传入参考",
     "Advanced options": "高级选项",
     "Audio mode": "音频模式",
     "Audio denoise strength": "音频去噪强度",
@@ -186,26 +191,11 @@ const DOM_TRANSLATIONS = {
     "Upscale megapixels": "二采百万像素",
     "Upscale size": "二采尺寸",
     "Prompt groups": "提示词组",
-    "Guide images": "引导图",
     "Click to copy this label into the prompt": "点击复制该标签，可直接写进提示词",
     "Copied": "已复制",
-    "Guide frame: a picture anchor, not a prompt label": "引导帧：画面锚点，不是提示词标签",
-    "Pick or drop an image first": "请先选择或拖入一张图片",
-    "Guide image: anchor a picture at a second inside this group": "引导图：在这一组的某一秒插一张图做引导",
-    "Click the guide button to add a picture anchor": "点右侧引导按钮，为这一刻加一张画面锚点",
-    "Insert position": "插入位置",
-    "Second (exact)": "秒数（精确）",
-    "What this image marks (optional)": "这张图代表什么（可选）",
-    "frame": "第",
-    "Add": "添加",
-    "Anchor a picture at a second inside this group; the model is guided to show it at that moment. Uses H3's keyframe mechanism, so one frame is enough.": "在这一组的某一秒锚一张图，模型会在那一刻把它画出来。走的是 H3 的原生 keyframe 机制，单帧即可、不要求帧数对齐。",
-    "No guide images yet": "还没有引导图",
-    "Upload an image on the node first": "请先在节点上上传一张图",
-    "Drop an image here or click to upload": "把图片拖到这里，或点击上传",
     "Uploading": "上传中",
     "Added": "已添加",
     "Only image files are supported here": "这里只支持图片文件",
-    "Tip: keep the guide inside this group's own seconds; it is converted to that group's frame automatically.": "提示：秒数填在本组时长之内即可，会自动换算成该组的帧号。",
     "Remove": "移除",
     "Close": "关闭",
     "Continuity ON: pins the previous segment's tail at this segment's head": "接续开：把上一段的结尾钉进本段开头（剧情连续）",
@@ -258,10 +248,20 @@ const DOM_TRANSLATIONS = {
     "Confirm": "确定",
     "Maximum output tokens": "最大输出 Tokens",
     "Automatic optimization before run": "运行前自动优化提示词",
+    "Grab frame": "\u6293\u53d6\u5e27\u505a\u53c2\u8003\u56fe",
+    "Grab this frame": "\u6293\u53d6\u6b64\u5e27",
+    "Frame": "\u5e27",
+    "Scrub the video, then grab the current frame as a reference image": "\u62d6\u52a8\u9009\u5e27\uff0c\u628a\u5f53\u524d\u753b\u9762\u6293\u6210\u53c2\u8003\u56fe",
+    "No free ref_image slot": "\u6ca1\u6709\u7a7a\u95f2\u7684 ref_image \u69fd\u4f4d\u4e86",
     "Trim audio": "裁剪音频",
     "Trim video": "裁剪视频",
+  "Trim video / fps / resolution": "裁剪 / 帧率 / 分辨率",
     "Video clip range": "视频取用区间",
     "Upload fps": "上传帧率",
+    "Upload resolution": "上传分辨率",
+    "Original size": "原始大小",
+    "Compressing…": "压缩中…",
+    "Compress failed": "压缩失败",
     "Audio trim": "音频截取",
     "Start": "开始",
     "End": "结束",
@@ -308,6 +308,8 @@ function t(text) { return isChineseLocale() ? (DOM_TRANSLATIONS[text] || text) :
 function aspectInternalValue(value) {
     const aliases = {
         "自适应": "adaptive",
+        "按视频宽高比": "adaptive",
+        "按视频宽高": "adaptive",
         "16:9 (Widescreen)": "16:9",
         "9:16 (Portrait)": "9:16",
         "21:9 (Ultrawide)": "21:9",
@@ -316,7 +318,7 @@ function aspectInternalValue(value) {
 }
 function aspectDisplayValue(value) {
     const internal = aspectInternalValue(value);
-    if (isChineseLocale() && internal === "adaptive") return "自适应";
+    if (isChineseLocale() && internal === "adaptive") return "按视频宽高比";
     return internal;
 }
 
@@ -324,7 +326,7 @@ const ASPECT_INTERNAL_VALUES = [
     "adaptive", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4", "1:1", "21:9",
 ];
 const ASPECT_DISPLAY_VALUES = {
-    adaptive: "自适应",
+    adaptive: "按视频宽高比",
     "16:9": "16:9",
     "9:16": "9:16",
     "3:2": "3:2",
@@ -384,7 +386,7 @@ function drawAspectDisplayOverlay(node, ctx) {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = `${Math.max(12, Math.round(height * 0.55))}px Arial,sans-serif`;
-    ctx.fillText("自适应", (left + right) / 2, y + height / 2);
+    ctx.fillText("按视频宽高比", (left + right) / 2, y + height / 2);
     ctx.restore();
 }
 
@@ -473,20 +475,6 @@ function make(tag, css = {}, text = "") {
     const el = document.createElement(tag); Object.assign(el.style, css);
     if (text) el.textContent = text; return el;
 }
-/**
- * 引导图按钮图标：外框（画面）+ 中心靶点（锚定）。
- * 用内联 SVG 而不是 emoji——小尺寸下清晰、颜色跟随状态，且和 ⇄ ✂ ✕ 的线条风格一致。
- */
-function guideIcon(color = "#5d7385", size = 13) {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 16 16");
-    svg.setAttribute("width", String(size)); svg.setAttribute("height", String(size));
-    svg.style.cssText = `display:block;color:${color};transition:color .12s`;
-    svg.innerHTML =
-        `<rect x="1.7" y="3.2" width="12.6" height="9.6" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/>`
-        + `<circle cx="8" cy="8" r="2.4" fill="currentColor"/>`;
-    return svg;
-}
 function kindOf(file) {
     if (file.type?.startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name)) return "image";
     if (file.type?.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name)) return "video";
@@ -557,7 +545,7 @@ function createPanel(node) {
 .ghh3-video-trim-inputs{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:6px}
 .ghh3-video-trim-inputs label{display:inline-flex;align-items:center;gap:5px;color:#9db0be}
 .ghh3-video-trim-inputs input{width:92px;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:12px Arial,sans-serif}
-        .ghh3-audio-trim-button,.ghh3-video-trim-button,.ghh3-sound{position:absolute;z-index:6;width:14px;height:14px;padding:0;border:0;border-radius:50%;background:rgba(34,52,65,.52)!important;color:#fff;font:9px/14px Arial,sans-serif;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .12s ease}.ghh3-audio-trim-button{right:3px;top:3px}.ghh3-audio-card .ghh3-audio-trim-button{right:40px;top:4px}.ghh3-video-trim-button{left:3px;top:3px}.ghh3-sound{right:2px;top:2px}.ghh3-card:hover .ghh3-audio-trim-button,.ghh3-card:hover .ghh3-video-trim-button,.ghh3-card:hover .ghh3-sound,.ghh3-audio-trim-button:focus-visible,.ghh3-video-trim-button:focus-visible,.ghh3-sound:focus-visible{opacity:1;pointer-events:auto}.ghh3-audio-trim-button:hover,.ghh3-video-trim-button:hover,.ghh3-sound:hover{color:#fff;background:rgba(45,75,88,.66)!important}.ghh3-trim-range-badge{position:absolute;left:2px;bottom:0;z-index:5;padding:0 4px;border-radius:3px 3px 0 0;background:rgba(10,164,214,.82);color:#04141c;font:8px/12px Arial,sans-serif;pointer-events:none}
+        .ghh3-audio-trim-button,.ghh3-video-trim-button,.ghh3-sound{position:absolute;z-index:6;width:14px;height:14px;padding:0;border:0;border-radius:50%;background:rgba(34,52,65,.52)!important;color:#fff;font:9px/14px Arial,sans-serif;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .12s ease}.ghh3-audio-trim-button{right:3px;top:3px}.ghh3-audio-card .ghh3-audio-trim-button{right:40px;top:4px}.ghh3-video-trim-button{left:3px;top:3px}.ghh3-sound{right:2px;top:2px}.ghh3-card:hover .ghh3-audio-trim-button,.ghh3-card:hover .ghh3-video-trim-button,.ghh3-card:hover .ghh3-sound,.ghh3-audio-trim-button:focus-visible,.ghh3-video-trim-button:focus-visible,.ghh3-sound:focus-visible{opacity:1;pointer-events:auto}.ghh3-audio-trim-button:hover,.ghh3-video-trim-button:hover,.ghh3-sound:hover{color:#fff;background:rgba(45,75,88,.66)!important}/* BlackRinRemake grab-button-pos v1 */.ghh3-video-grab-button{position:absolute;z-index:6;width:15px;height:15px;padding:0;border:0;border-radius:50%;background:rgba(20,110,132,.72)!important;color:#c6f4fd;font:10px/15px Arial,sans-serif;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .12s ease;left:3px;top:21px;box-shadow:0 0 0 1px rgba(45,190,215,.55) inset}.ghh3-card:hover .ghh3-video-grab-button,.ghh3-video-grab-button:focus-visible{opacity:1;pointer-events:auto}.ghh3-video-grab-button:hover{background:rgba(32,165,192,.9)!important;color:#fff}/* BlackRinRemake frame-grab v1 */.ghh3-frame-grab{grid-column:1/-1;display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid #18bdd3;border-radius:6px;background:#0d1b28;margin:2px 0}.ghh3-frame-grab video{width:100%;max-height:220px;border-radius:4px;background:#071018;display:block}.ghh3-frame-grab-row{display:flex;align-items:center;gap:6px}.ghh3-frame-grab-row input[type=range]{flex:1;accent-color:#18bdd3}.ghh3-frame-grab-time{font:9px/14px Consolas,monospace;color:#8ea3b2;white-space:nowrap}.ghh3-frame-grab-btn{flex:none;border:1px solid #18bdd3;border-radius:4px;background:rgba(24,189,211,.14);color:#9fdceb;font:9px/16px Arial,sans-serif;padding:1px 8px;cursor:pointer;white-space:nowrap}.ghh3-frame-grab-btn:hover{background:rgba(24,189,211,.3)}.ghh3-frame-grab-btn:disabled{opacity:.45;cursor:default}.ghh3-frame-grab-close{flex:none;border:0;background:transparent;color:#5c788c;font:10px/16px Arial,sans-serif;cursor:pointer}.ghh3-frame-grab-close:hover{color:#fff}.ghh3-frame-grab-btn.ghh3-grabbing{opacity:.55;pointer-events:none}.ghh3-trim-range-badge{position:absolute;left:2px;bottom:0;z-index:5;padding:0 4px;border-radius:3px 3px 0 0;background:rgba(10,164,214,.82);color:#04141c;font:8px/12px Arial,sans-serif;pointer-events:none}
         .ghh3-trim-overlay{position:fixed;inset:0;z-index:10200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.64);font:12px Arial,sans-serif}.ghh3-trim-dialog{width:min(720px,calc(100vw - 30px));box-sizing:border-box;padding:15px;background:#17222c;color:#d7e3ec;border:1px solid #365161;border-radius:9px;box-shadow:0 18px 52px rgba(0,0,0,.55)}.ghh3-trim-title{font-size:13px;margin-bottom:12px}.ghh3-trim-wave-wrap{position:relative;width:100%;height:190px;overflow:hidden;border:1px solid #324b5b;border-radius:6px;background:#0d1720;cursor:crosshair;touch-action:none}.ghh3-trim-wave-wrap.ghh3-trim-panning{cursor:grabbing}.ghh3-trim-wave{display:block;width:100%;height:100%}.ghh3-trim-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7f94a3;background:#0d1720}.ghh3-trim-times{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}.ghh3-trim-time{position:relative;padding:7px 9px;border-radius:5px;background:#1d2b36;color:#9fb0bc}.ghh3-trim-time strong{display:block;margin-top:3px;color:#e2edf3;font-size:13px;font-weight:500}.ghh3-trim-sync{position:absolute;right:6px;top:5px;border:1px solid #466474;border-radius:4px;background:#223744;color:#b8d2dc;padding:2px 7px;font:12px/16px Arial,sans-serif;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.04)}.ghh3-trim-sync:hover{background:#2a4a58;border-color:#5b8091;color:#d9f0f4}.ghh3-trim-controls{display:flex;align-items:center;gap:8px;margin-top:12px}.ghh3-trim-preview{display:flex;align-items:center;justify-content:center;width:30px;height:28px;border:1px solid #3a5363;border-radius:4px;background:#1d2b36;color:#dce7ee;padding:0;cursor:pointer}.ghh3-trim-preview svg{width:12px;height:12px}.ghh3-trim-hint{color:#778b99;font-size:10px}.ghh3-trim-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.ghh3-trim-actions button{border:1px solid #3a5363;border-radius:4px;background:#1d2b36;color:#dce7ee;padding:6px 14px;cursor:pointer}.ghh3-trim-actions button:last-child{background:#17535a;border-color:#26717a;color:#e8f6f6}.ghh3-trim-actions button:disabled,.ghh3-trim-preview:disabled{opacity:.45;cursor:not-allowed}
     `;
     root.appendChild(style);
@@ -624,7 +612,6 @@ function createPanel(node) {
             advanced: !!advanced?.open,
             audioModeByMode: { ...audioModeByMode },
             audioModeAutoByMode: { ...audioModeAutoByMode },
-            guides: savedState.guides,
             optimizer: persistedOptimizer(),
             optimizerCache,
             optimizerBefore,
@@ -648,6 +635,24 @@ function createPanel(node) {
     domWidget.options.getHeight = () => "100%";
     // 面板宽度可调：拖节点右边缘改变宽度，宽度记进工作流（最小 380，最大 1400）
     domWidget.options.minNodeSize = null;
+    /* BlackRinRemake width-sync v1 */
+    // 恢复工作流后面板宽度会卡在旧值（DOM widget 的 width 不会跟着 node.size 走），
+    // 这里每次布局/渲染都把它同步成节点真实宽度。
+    const syncDomWidgetWidth = () => {
+        const targetW = Math.max(1, Math.round(Number(node.size?.[0]) || 0));
+        if (targetW && domWidget.width !== targetW) domWidget.width = targetW;
+    };
+    syncDomWidgetWidth();
+    /* BlackRinRemake width-sync v2 */
+    // DOM widget 挂载瞬间 ComfyUI 会把 widget.width 改回“按当时画布缩放算出的值”
+    // （画布缩到 42% 时就变成 213，面板于是被压成窄条）。加一层轻量守护，
+    // 保证面板宽度始终等于节点真实宽度；节点删除时自动停掉。
+    const widthGuard = setInterval(syncDomWidgetWidth, 400);
+    const previousOnRemoved = node.onRemoved;
+    node.onRemoved = function(...args) {
+        clearInterval(widthGuard);
+        return previousOnRemoved?.apply(this, args);
+    };
     const baseComputeSize = node.computeSize.bind(node);
     node.computeSize = function(out) {
         const measured = baseComputeSize(out);
@@ -1363,11 +1368,22 @@ function nodeColorToCss(value) {
     // 拖动格子右缘单独调整该段时长。≥2 组才进多段模式。
     const segmentsWidget = widget(node, "segments_json");
     hideWidget(segmentsWidget);
-    let brGroups = (() => {
-        const raw = node.properties?.br_segments_json ?? segmentsWidget?.value;
+    /* BlackRinRemake segments-authority v1 */
+    // 组数据的权威来源：挑"提示词非空"的那个候选。properties.br_segments_json 是随工作流
+    // 序列化的旧快照，经常是 [{"prompt":"","duration":5}] 这样的空组；一旦无条件优先于
+    // segments_json 控件，就会把页面上的提示词覆盖成空，后端随即报「第 1 组提示词是空的」。
+    const parseGroupsJson = (raw) => {
         try { const parsed = JSON.parse(raw || "[]"); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+    };
+    const groupsWithText = (list) => (Array.isArray(list) ? list : [])
+        .reduce((count, group) => count + (String((group && group.prompt) || "").trim() ? 1 : 0), 0);
+    let brGroups = (() => {
+        const fromProps = parseGroupsJson(node.properties?.br_segments_json);
+        const fromWidget = parseGroupsJson(segmentsWidget?.value);
+        if (fromWidget.length && groupsWithText(fromWidget) >= groupsWithText(fromProps)) return fromWidget;
+        return fromProps;
     })();
-    if (!brGroups.length) brGroups = [{ prompt: prompt.value || "", duration: Number(widget(node, "duration_seconds")?.value) || 5 }];
+    if (!brGroups.length) brGroups = [{ prompt: prompt.value || "", duration: Number(widget(node, "duration_seconds")?.value) || 5, cont: false }];
     let brActive = 0;
     const timelineWrap = make("div");
     timelineWrap.style.cssText = "grid-row:2;min-width:0;border:1px solid #2d4255;border-radius:8px;padding:6px;margin:2px 0 6px;background:#111c27";
@@ -1394,14 +1410,11 @@ function nodeColorToCss(value) {
             : "-> upscale cond: slow, no drift");
     };
     const syncUpscaleMode = () => {
-        // 只有 1 组（或 0 组）时：合并与首段等价，回"首段"并锁住下拉
-        const single = brGroups.length <= 1;
-        if (single) savedState.upscale_mode = "first";
-        upscaleModeSel.value = savedState.upscale_mode;
-        upscaleModeSel.disabled = single;
-        upscaleModeSel.title = single
-            ? t("Only one group: merge and first are the same, so this is locked to the single-condition mode")
-            : t("Upscale conditioning source");
+        // 二采条件固定用「首段条件」：实测不漂移、还省一次长文本编码。
+        // 「合并剧本」已废弃，下拉从工具栏移除；这里强制回写一次，
+        // 老工作流里残留的 "merge" 值也会被就地改掉。
+        savedState.upscale_mode = "first";
+        upscaleModeSel.value = "first";
         refreshUpscaleHint();
     };
     upscaleModeSel.onchange = () => {
@@ -1409,251 +1422,239 @@ function nodeColorToCss(value) {
         persistState();
         refreshUpscaleHint();
     };
-    const tlHint = make("span", {}, t("drag block edge to set duration")); tlHint.style.cssText = "font-size:9px;color:#667887";
-    /** 某组的中段引导图编辑：选一张已上传的图 + 组内秒数（可多条）。 */
-    /** 引导图不占 <Picture n>（官方语义：只在 cond 段做画面锚点），所以没有标签可插入。 */
-    function openGuideEditor(groupIndex) {
-        const group = brGroups[groupIndex];
-        if (!group) return;
-        savedState.guides = savedState.guides && typeof savedState.guides === "object" ? savedState.guides : {};
-        if (!Array.isArray(savedState.guides[groupIndex])) savedState.guides[groupIndex] = [];
-        const guides = savedState.guides[groupIndex];
-        const groupSeconds = Number(group.duration) || 5;
-
-        const overlay = make("div"); overlay.className = "ghh3-opt-overlay";
-        const dialog = make("div"); dialog.className = "ghh3-opt-dialog";
-        const title = make("div", {}, `${t("Guide images")} · ${t("Prompt group")} ${groupIndex + 1}（${groupSeconds.toFixed(1)}s）`);
-        title.className = "ghh3-opt-title"; dialog.append(title);
-        const hint = make("div", {}, t("Anchor a picture at a second inside this group; the model is guided to show it at that moment. Uses H3's keyframe mechanism, so one frame is enough."));
-        hint.className = "ghh3-hint"; dialog.append(hint);
-
-        // 可选图源：当前节点的已上传素材（图/视频封面）
-        const available = [...media.entries()]
-            .filter(([, entry]) => entry?.kind === "image")
-            .map(([, entry]) => entry.name);
-
-        const listBox = make("div"); listBox.style.cssText = "display:grid;gap:6px;margin:8px 0";
-        dialog.append(listBox);
-        const renderList = () => {
-            listBox.replaceChildren();
-            if (!guides.length) {
-                const empty = make("div", {}, t("No guide images yet"));
-                empty.className = "ghh3-hint";
-                listBox.append(empty);
-                return;
-            }
-            guides.forEach((guide, gi) => {
-                const row = make("div");
-                row.style.cssText = "display:grid;grid-template-columns:auto minmax(0,1fr) 74px minmax(0,1.1fr) auto;gap:6px;align-items:center";
-                // 引导帧不占 <Picture n>，这里只标序号（画面锚点，非提示词标签）
-                const idxEl = make("div", {}, `#${gi + 1}`);
-                idxEl.style.cssText = "font:10px/1.6 Consolas,monospace;color:#8ea3b2;text-align:center;padding:1px 3px";
-                idxEl.title = t("Guide frame: a picture anchor, not a prompt label");
-                const nameEl = make("div", {}, String(guide.name || ""));
-                nameEl.style.cssText = "font-size:11px;color:#cfe0ea;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
-                const secInput = make("input");
-                secInput.type = "number"; secInput.min = "0"; secInput.max = String(groupSeconds); secInput.step = "0.1";
-                secInput.value = String(Number(guide.seconds) || 0);
-                secInput.style.cssText = "width:74px;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
-                secInput.onchange = () => {
-                    guide.seconds = Math.max(0, Math.min(groupSeconds, Number(secInput.value) || 0));
-                    secInput.value = guide.seconds.toFixed(1);
-                    persistState();
-                };
-                // 用途说明：原样转给优化器，让 LLM 知道这张图在剧情里代表什么、
-                // 与其它引导图是什么关系（例如"起始造型"→"结尾造型"）。
-                const noteInput = make("input");
-                noteInput.type = "text";
-                noteInput.placeholder = t("What this image marks (optional)");
-                noteInput.value = String(guide.note || "");
-                noteInput.style.cssText = "width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
-                noteInput.onchange = () => {
-                    guide.note = noteInput.value.trim();
-                    persistState();
-                };
-                const del = make("button", {}, "×");
-                del.style.cssText = "border:0;background:transparent;color:#8fa3b3;font-size:13px;cursor:pointer";
-                del.title = t("Remove");
-                del.onclick = () => { guides.splice(gi, 1); persistState(); renderList(); renderGroups(); };
-                row.append(idxEl, nameEl, secInput, noteInput, del);
-                listBox.append(row);
-            });
-        };
-        renderList();
-
-        // 添加一条
-        const addRow = make("div");
-        addRow.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) auto;gap:6px;align-items:center;margin-top:4px";
-        const picker = make("select");
-        picker.style.cssText = "width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:5px;font:11px Arial,sans-serif";
-        if (available.length) {
-            available.forEach(name => picker.appendChild(new Option(name, name)));
-        } else {
-            picker.appendChild(new Option(t("Upload an image on the node first"), ""));
+    // ===== 分段包（segments JSON）导入 / 导出 =====
+    // 与后端 segments_json 完全同一格式：[{prompt, duration, cont}]。
+    // 额外字段（id / src_frames / gen_frames / shots / notes ...）原样保留：
+    // 后端 _parse_prompt_groups 只读 prompt、duration、cont，其余自动忽略。
+    const segmentsNotice = make("span", {}, "");
+    segmentsNotice.style.cssText = "font-size:9px;color:#7d93a2;margin-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px";
+    let segmentsNoticeTimer = 0;
+    const notifySegments = (text, bad = false) => {
+        segmentsNotice.textContent = text || "";
+        segmentsNotice.title = text || "";
+        segmentsNotice.style.color = bad ? "#e0715a" : "#7fd6a8";
+        if (segmentsNoticeTimer) clearTimeout(segmentsNoticeTimer);
+        segmentsNoticeTimer = setTimeout(() => { segmentsNotice.textContent = ""; segmentsNotice.title = ""; }, 8000);
+    };
+    const parseSegmentsJson = text => {
+        const raw = String(text || "").trim();
+        if (!raw || !(raw.startsWith("[") || raw.startsWith("{"))) return { ok: false, silent: true };
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (error) {
+            return { ok: false, reason: (isChineseLocale() ? "JSON 解析失败：" : "JSON parse failed: ") + (error?.message || error) };
         }
-        // 位置：粗略定位条（拖动选位置）+ 精确秒数输入，两者联动
-        let pendingSeconds = groupSeconds / 2;
-        const locWrap = make("div");
-        locWrap.style.cssText = "margin-top:8px;border:1px solid #2d4255;border-radius:7px;background:#101b26;padding:7px 9px";
-        const locHead = make("div");
-        locHead.style.cssText = "display:flex;align-items:baseline;gap:6px;margin-bottom:6px";
-        const locLabel = make("span", {}, t("Insert position"));
-        locLabel.style.cssText = "font-size:11px;color:#cfe0ea";
-        locHead.append(locLabel);
-        const locRead = make("span", {}, "");
-        locRead.style.cssText = "margin-left:auto;font-size:11px;color:#0aa4d6";
-        locHead.append(locRead);
-        locWrap.append(locHead);
-        // 轨道（整组时长 = 100%）
-        const locTrack = make("div");
-        locTrack.style.cssText = "position:relative;height:26px;border-radius:5px;background:linear-gradient(90deg,#162835,#1d3444);"
-            + "border:1px solid #2a3c49;cursor:pointer;touch-action:none";
-        const locFill = make("div");
-        locFill.style.cssText = "position:absolute;left:0;top:0;bottom:0;width:50%;border-radius:4px 0 0 4px;background:rgba(10,164,214,.22)";
-        const locKnob = make("div");
-        locKnob.style.cssText = "position:absolute;top:2px;bottom:2px;width:3px;margin-left:-1.5px;left:50%;"
-            + "background:#0aa4d6;box-shadow:0 0 6px rgba(10,164,214,.9);pointer-events:none";
-        locTrack.append(locFill, locKnob);
-        // 刻度：首/中/尾
-        [0, 0.25, 0.5, 0.75, 1].forEach(ratio => {
-            const tick = make("div");
-            tick.style.cssText = `position:absolute;top:0;bottom:0;left:${ratio * 100}%;width:1px;background:rgba(120,150,170,.22);pointer-events:none`;
-            locTrack.append(tick);
+        // 两种形态：顶层数组（旧）= 只有分组；顶层对象（新）= 分组 + 素材 + 节点参数
+        const settings = !Array.isArray(data) && data && typeof data === "object" ? data : null;
+        const list = Array.isArray(data) ? data : (Array.isArray(data?.segments) ? data.segments : null);
+        if (!list || !list.length) {
+            return { ok: false, reason: isChineseLocale() ? "需要 JSON 数组，或 {\"segments\":[...]}" : "Expected a JSON array or {\"segments\":[...]}" };
+        }
+        const groups = [];
+        const bad = [];
+        list.forEach((item, index) => {
+            if (!item || typeof item !== "object") { bad.push(index + 1); return; }
+            const duration = Number(item.duration);
+            const promptText = typeof item.prompt === "string" ? item.prompt : "";
+            if (!promptText.trim() || !Number.isFinite(duration) || duration <= 0) { bad.push(index + 1); return; }
+            const group = { prompt: promptText, duration: Math.min(30, Math.max(1, Math.round(duration * 100) / 100)) };
+            if (item.cont === false) group.cont = false;
+            for (const [key, value] of Object.entries(item)) {
+                if (key === "prompt" || key === "duration" || key === "cont") continue;
+                group[key] = value;
+            }
+            groups.push(group);
         });
-        locWrap.append(locTrack);
-        const locScale = make("div");
-        locScale.style.cssText = "display:flex;justify-content:space-between;color:#5d7385;font:9px/1.6 Arial,sans-serif;margin-top:1px";
-        locScale.append(make("span", {}, "0s"), make("span", {}, `${groupSeconds.toFixed(1)}s`));
-        const locFrames = make("span", {}, "");
-        locScale.insertBefore(locFrames, locScale.lastChild);
-        locWrap.append(locScale);
-        // 精确秒数输入
-        const secRow = make("div");
-        secRow.style.cssText = "display:flex;align-items:center;gap:7px;margin-top:7px";
-        const secLabel = make("span", {}, t("Second (exact)"));
-        secLabel.style.cssText = "font-size:11px;color:#8ea3b2;white-space:nowrap";
-        secRow.append(secLabel);
-        const newSec = make("input");
-        newSec.type = "number"; newSec.min = "0"; newSec.max = String(groupSeconds); newSec.step = "0.1";
-        newSec.value = pendingSeconds.toFixed(1);
-        newSec.style.cssText = "width:84px;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
-        secRow.append(newSec);
-        locWrap.append(secRow);
-
-        const paintLoc = () => {
-            const ratio = groupSeconds > 0 ? Math.max(0, Math.min(1, pendingSeconds / groupSeconds)) : 0;
-            locFill.style.width = `${(ratio * 100).toFixed(2)}%`;
-            locKnob.style.left = `${(ratio * 100).toFixed(2)}%`;
-            const frame = Math.max(0, Math.round(pendingSeconds * 24));
-            locRead.textContent = `${pendingSeconds.toFixed(1)}s`;
-            locFrames.textContent = t("frame") + " " + frame;
-            if (document.activeElement !== newSec) newSec.value = pendingSeconds.toFixed(1);
-        };
-        locTrack.onpointerdown = event => {
-            event.stopPropagation();
-            event.preventDefault();
-            const rect = locTrack.getBoundingClientRect();
-            const apply = moveEvent => {
-                const ratio = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
-                pendingSeconds = Math.round(ratio * groupSeconds * 10) / 10;
-                paintLoc();
-            };
-            // 先落一次位置，再尝试捕获指针（合成事件没有真实指针，捕获会抛）
-            apply(event);
-            try { locTrack.setPointerCapture(event.pointerId); } catch {}
-            const up = () => {
-                locTrack.removeEventListener("pointermove", apply);
-                locTrack.removeEventListener("pointerup", up);
-            };
-            locTrack.addEventListener("pointermove", apply);
-            locTrack.addEventListener("pointerup", up);
-        };
-        newSec.oninput = () => {
-            pendingSeconds = Math.max(0, Math.min(groupSeconds, Number(newSec.value) || 0));
-            paintLoc();
-        };
-        paintLoc();
-        dialog.append(locWrap);
-
-        const newNote = make("input");
-        newNote.type = "text";
-        newNote.placeholder = t("What this image marks (optional)");
-        newNote.style.cssText = "width:100%;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif";
-
-        const addBtn = make("button", {}, t("Add"));
-        addBtn.className = "ghh3-opt-add";
-        addBtn.style.cssText = "margin-top:8px;border:0;border-radius:5px;background:#0aa4d6;color:#06131b;font:12px Arial,sans-serif;font-weight:600;padding:6px 16px;cursor:pointer";
-        addBtn.onclick = () => {
-            const name = picker.value;
-            if (!name) {
-                // 没有可选素材时不要静默失败：直接把上传入口高亮出来
-                drop.style.borderColor = "#0aa4d6";
-                status.textContent = t("Pick or drop an image first");
-                fileInput.click();
-                return;
+        if (bad.length) {
+            return { ok: false, reason: isChineseLocale()
+                ? "第 " + bad.join("、") + " 组缺少 prompt 或 duration，已取消导入"
+                : "Groups " + bad.join(",") + " miss prompt or duration; import cancelled" };
+        }
+        return { ok: true, groups, settings };
+    };
+    const MEDIA_SLOT_KIND = slot => (slot.startsWith("ref_image_") || slot === "first_frame" || slot === "last_frame")
+        ? "image"
+        : slot.startsWith("ref_video_") ? "video" : "audio";
+    const freeSlotFor = kind => (kind === "image" ? imageSlots.filter(name => name.startsWith("ref_image_"))
+        : kind === "video" ? videoSlots
+        : audioSlots.filter(name => name.startsWith("ref_audio_"))).find(name => !media.has(name));
+    const fileExistsInInput = async fileName => {
+        try {
+            const url = api.apiURL("/view?filename=" + encodeURIComponent(fileName) + "&type=input&subfolder=");
+            const response = await fetch(url, { method: "GET" });
+            if (response.ok) { try { response.body?.cancel?.(); } catch {} return true; }
+            return false;
+        } catch { return false; }
+    };
+    const mountMedia = async (entries, notes) => {
+        if (!Array.isArray(entries)) return;
+        const mounted = [];
+        for (const raw of entries) {
+            if (!raw || typeof raw !== "object") continue;
+            const fileName = String(raw.file || raw.name || "").split(/[\\/]/).pop().trim();
+            if (!fileName) continue;
+            const kind = raw.kind || MEDIA_SLOT_KIND(String(raw.slot || "ref_image_1"));
+            const slot = String(raw.slot || "") || freeSlotFor(kind);
+            if (!slot) { notes.push((isChineseLocale() ? "没有空的 " : "no free ") + kind + (isChineseLocale() ? " 槽位：" : " slot for ") + fileName); continue; }
+            if (MEDIA_SLOT_KIND(slot) !== kind) { notes.push((isChineseLocale() ? "槽位 " : "slot ") + slot + (isChineseLocale() ? " 不是 " : " is not ") + kind); continue; }
+            if (media.has(slot)) { notes.push(slot + (isChineseLocale() ? " 已有素材，跳过 " : " occupied; skipped ") + fileName); continue; }
+            if (!(await fileExistsInInput(fileName))) {
+                notes.push((isChineseLocale() ? "缺文件 " : "missing file ") + fileName + (isChineseLocale() ? "（不在 input 目录，请拖进素材框）" : " (not in input dir; drop it manually)"));
+                continue;
             }
-            guides.push({ name, seconds: pendingSeconds, note: newNote.value.trim() });
-            newNote.value = "";
+            const entry = { name: fileName, kind };
+            if (raw.muted) entry.muted = true;
+            if (Number.isFinite(Number(raw.trimStart))) entry.trimStart = Number(raw.trimStart);
+            if (Number.isFinite(Number(raw.trimEnd))) entry.trimEnd = Number(raw.trimEnd);
+            media.set(slot, entry);
+            setMediaWidget(node, slot, fileName);
+            mounted.push(fileName);
+        }
+        if (mounted.length) {
             persistState();
-            renderList();
-            renderGroups();
+            render();
+            notes.push((isChineseLocale() ? "已挂素材 " : "mounted ") + mounted.length);
+        }
+    };
+    const syncAdvancedInput = name => {
+        const row = advancedRows?.get?.(name);
+        const control = widget(node, name);
+        if (!row || !control) return;
+        const input = row.querySelector("input, select");
+        if (input) input.value = control.value;
+    };
+    const applyNodeSettings = (settings, notes) => {
+        if (!settings || typeof settings !== "object") return;
+        const mode = String(settings.mode || "");
+        if (mode === "all_reference" || mode === "text_keyframes") {
+            if (state.mode !== mode) switchMode(mode);
+        }
+        const applyNumber = (name, value, min, max) => {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return;
+            const control = widget(node, name);
+            if (!control) return;
+            const next = Math.min(max, Math.max(min, numeric));
+            if (Number(control.value) === next) return;
+            setWidget(node, name, next);
+            syncAdvancedInput(name);
+            notes.push(name + "=" + next);
         };
-        addRow.append(picker, newNote, addBtn);
-        dialog.append(addRow);
-        // 直接上传一张引导图（拖进来或点选），不用先扔到节点的素材槽
-        const drop = make("div");
-        drop.style.cssText = "margin-top:7px;border:1px dashed #2c5368;border-radius:6px;background:#101b26;color:#08b4ed;font-size:11px;padding:9px;text-align:center;cursor:pointer";
-        drop.textContent = t("Drop an image here or click to upload");
-        const fileInput = make("input");
-        fileInput.type = "file"; fileInput.accept = "image/*"; fileInput.style.display = "none";
-        const status = make("div", {}, "");
-        status.className = "ghh3-hint"; status.style.marginTop = "4px";
-        const addUploaded = async file => {
-            if (!file) return;
-            status.textContent = t("Uploading") + "…";
-            try {
-                const name = await uploadFile(file);
-                guides.push({ name, seconds: pendingSeconds, note: newNote.value.trim() });
-                newNote.value = "";
-                persistState();
-                renderList(); renderGroups();
-                status.textContent = t("Added") + ": " + name;
-            } catch (error) {
-                status.textContent = String(error?.message || error);
+        applyNumber("megapixels", settings.megapixels, 0.1, 2);
+        applyNumber("upscale_megapixels", settings.upscale_megapixels, 0.9, 16);
+        if (settings.aspect) {
+            const aspectControl = widget(node, "aspect");
+            const wanted = aspectInternalValue(String(settings.aspect));
+            if (aspectControl && ASPECT_INTERNAL_VALUES.includes(wanted) && aspectControl.value !== wanted) {
+                aspectControl.value = wanted;
+                notes.push("aspect=" + wanted);
             }
-        };
-        drop.onclick = () => fileInput.click();
-        fileInput.onchange = () => { addUploaded(fileInput.files?.[0]); fileInput.value = ""; };
-        drop.ondragover = event => { event.preventDefault(); event.stopPropagation(); drop.style.borderColor = "#0aa4d6"; };
-        drop.ondragleave = () => { drop.style.borderColor = "#2c5368"; };
-        drop.ondrop = event => {
-            event.preventDefault(); event.stopPropagation();
-            drop.style.borderColor = "#2c5368";
-            const file = event.dataTransfer?.files?.[0];
-            if (file && /^image\//.test(file.type || "")) addUploaded(file);
-            else status.textContent = t("Only image files are supported here");
-        };
-        dialog.append(drop, fileInput, status);
-        const note = make("div", {}, t("Tip: keep the guide inside this group's own seconds; it is converted to that group's frame automatically."));
-        note.className = "ghh3-hint"; note.style.marginTop = "6px"; dialog.append(note);
-
-        const actions = make("div"); actions.className = "ghh3-opt-actions";
-        const close = make("button", {}, t("Close"));
-        close.onclick = () => overlay.remove();
-        actions.append(close); dialog.append(actions);
-        overlay.append(dialog);
-        overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
-        document.body.appendChild(overlay);
-    }
+        }
+        if (settings.audio_mode) {
+            const audioControl = widget(node, "audio_mode");
+            const wanted = String(settings.audio_mode);
+            if (audioControl && ["native", "lock_source", "reference_only", "remix_source"].includes(wanted) && audioControl.value !== wanted) {
+                audioControl.value = wanted;
+                syncAdvancedInput("audio_mode");
+                notes.push("audio_mode=" + wanted);
+            }
+        }
+        try { upscalePreviewSync?.(); } catch {}
+        try { refreshTaskType?.(); } catch {}
+        try { refreshAdaptiveRatio?.(); } catch {}
+        try { dimensions.textContent = canvas(widget(node, "aspect")?.value, widget(node, "megapixels")?.value); } catch {}
+        node.setDirtyCanvas?.(true, true);
+    };
+    const applySegments = (groups, action = "replace") => {
+        const prepared = groups.map(group => ({ ...group }));
+        if (action === "append") brGroups.push(...prepared);
+        else brGroups.splice(0, brGroups.length, ...prepared);
+        brActive = action === "append" ? brGroups.length - prepared.length : 0;
+        loadGroupIntoEditor(brGroups[brActive]?.prompt || "");
+        saveGroups();
+        renderGroups();
+        if (typeof refreshStripLayout === "function") refreshStripLayout();
+        const frames = prepared.map(group => groupFrames(group));
+        const under = frames.filter(count => count < 124).length;
+        const over = frames.filter(count => count > 362).length;
+        let message = (isChineseLocale() ? "已导入 " : "Imported ") + prepared.length
+            + (isChineseLocale() ? " 段 · 帧数 " : " groups · frames ") + frames.join("/");
+        if (under) message += isChineseLocale() ? " · " + under + " 段低于训练下限 124 帧" : " · " + under + " under 124 frames";
+        if (over) message += isChineseLocale() ? " · " + over + " 段超过 362 帧" : " · " + over + " over 362 frames";
+        notifySegments(message, under > 0 || over > 0);
+        return message;
+    };
+    const importSegmentsText = async (text, action = "replace") => {
+        const parsed = parseSegmentsJson(text);
+        if (!parsed.ok) {
+            if (!parsed.silent) notifySegments(parsed.reason, true);
+            return parsed;
+        }
+        const notes = [];
+        applyNodeSettings(parsed.settings, notes);
+        if (parsed.settings?.media) await mountMedia(parsed.settings.media, notes);
+        const message = applySegments(parsed.groups, action);
+        if (notes.length) notifySegments(message + " · " + notes.join(" · "), true);
+        return parsed;
+    };
+    const exportSegments = () => {
+        const payload = brGroups.map(group => ({ ...group }));
+        const text = JSON.stringify(payload, null, 2);
+        try {
+            const blob = new Blob([text], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "segments.json";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            notifySegments((isChineseLocale() ? "已导出 " : "Exported ") + payload.length + (isChineseLocale() ? " 段 → segments.json" : " groups → segments.json"));
+        } catch (error) {
+            console.log("[BlackRin H3] 导出失败", error, text);
+            notifySegments(isChineseLocale() ? "导出失败，JSON 已打印到控制台" : "Export failed; JSON printed to console", true);
+        }
+    };
+    const segmentsButtonStyle = "border:1px solid #2c5368;border-radius:6px;background:#101b26;color:#9fd8ef;font-size:11px;padding:3px 8px;cursor:pointer";
+    const segmentsFileInput = make("input");
+    segmentsFileInput.type = "file";
+    segmentsFileInput.accept = ".json,application/json";
+    segmentsFileInput.style.cssText = "display:none";
+    segmentsFileInput.onchange = async () => {
+        const file = segmentsFileInput.files?.[0];
+        segmentsFileInput.value = "";
+        if (!file) return;
+        try {
+            await importSegmentsText(await file.text(), "replace");
+        } catch (error) {
+            notifySegments(String(error?.message || error), true);
+        }
+    };
+    const tlImport = make("button", {}, isChineseLocale() ? "导入 JSON" : "Import JSON");
+    tlImport.style.cssText = segmentsButtonStyle;
+    tlImport.title = isChineseLocale()
+        ? "选 segments.json 自动建组并填入每段提示词；也可以直接把 JSON 粘进下面的提示词框"
+        : "Pick segments.json to build groups; pasting the JSON into the prompt box also works";
+    tlImport.onclick = () => segmentsFileInput.click();
+    const tlExport = make("button", {}, isChineseLocale() ? "导出 JSON" : "Export JSON");
+    tlExport.style.cssText = segmentsButtonStyle;
+    tlExport.title = isChineseLocale() ? "把当前所有分组导出成 segments.json（含你在界面上改过的提示词）" : "Export current groups as segments.json";
+    tlExport.onclick = () => exportSegments();
+    const tlHint = make("span", {}, t("drag block edge to set duration")); tlHint.style.cssText = "font-size:9px;color:#667887";
 
     const tlAdd = make("button", {}, t("+ Add group")); tlAdd.style.cssText = "border:1px dashed #2c5368;border-radius:6px;background:#101b26;color:#08b4ed;font-size:11px;padding:3px 10px;cursor:pointer";
-    tlBar.append(tlTitle, upscaleModeSel, upscaleHint, tlHint, tlAdd);
+    tlBar.append(tlTitle, tlHint, tlAdd, tlImport, tlExport, segmentsNotice);
     const tlStrip = make("div"); tlStrip.style.cssText = "display:flex;flex-direction:column;gap:2px;min-width:0;padding:0";
     timelineWrap.append(tlBar, tlStrip);
     const alignFrames = n => { n = Math.max(5, Math.round(n)); return n + (((5 - n) % 17) + 17) % 17; };
     const groupFrames = g => alignFrames((Number(g.duration) || 5) * 24);
     const saveGroups = () => {
-        const value = brGroups.length >= 1 ? JSON.stringify(brGroups) : "";
+        // 全组提示词都为空时不落盘（写空串）：后端靠 segments_json 非空来判定多段，
+        // 存一个空组只会让它抛「第 1 组提示词是空的」，而页面上字其实在 prompt 控件里。
+        const hasText = brGroups.some(group => String((group && group.prompt) || "").trim());
+        const value = brGroups.length >= 1 && hasText ? JSON.stringify(brGroups) : "";
         if (segmentsWidget && segmentsWidget.value !== value) segmentsWidget.value = value;
         // widget 值在刷新恢复时可能丢，properties 必然随工作流序列化
         node.properties.br_segments_json = value;
@@ -1737,86 +1738,10 @@ function nodeColorToCss(value) {
             info.style.cssText = `position:absolute;left:2px;top:2px;font-size:9px;${frames > 362 ? "color:#e0715a;" : "color:#7d93a2;"}pointer-events:none;z-index:3`;
             if (frames > 362) info.title = t("Over H3 training limit (362 frames ≈ 15s at 24fps); quality may degrade");
             mid.append(info);
-            // 中段引导图：给这一组在某个秒数插一张图引导（对应官方 Add Guide 的 keyframe 机制）
-            const guides = (() => {
-                savedState.guides = savedState.guides && typeof savedState.guides === "object" ? savedState.guides : {};
-                const list = savedState.guides[index];
-                if (!Array.isArray(list)) savedState.guides[index] = [];
-                return savedState.guides[index];
-            })();
-            const track = make("div");
-            track.className = "ghh3-guide-track";
-            track.style.cssText = "position:absolute;left:0;right:0;bottom:3px;top:17px;border-radius:4px;"
-                + "background:rgba(8,16,24,.42);border:1px solid #1f2f3a";
-            const groupSecs = Number(group.duration) || 5;
-            guides.forEach((guide, gi) => {
-                const ratio = Math.max(0, Math.min(1, (Number(guide.seconds) || 0) / groupSecs));
-                const chip = make("div");
-                chip.className = "ghh3-guide-chip";
-                chip.style.cssText = `position:absolute;top:1px;bottom:1px;width:20px;margin-left:-10px;left:${(ratio * 100).toFixed(2)}%;`
-                    + "border-radius:3px;border:1px solid #23c6ea;box-shadow:0 1px 3px rgba(0,0,0,.5);"
-                    + "background:#0d1b24 center/cover no-repeat;z-index:2;cursor:ew-resize;pointer-events:auto";
-                chip.style.backgroundImage = `url("${fileUrl(guide.name)}")`;
-                chip.title = `${guide.name} · ${(Number(guide.seconds) || 0).toFixed(1)}s`;
-                // 引导帧只做画面锚点（cond 段），不进提示词，所以角上标序号而非 <Picture n>
-                const badge = make("span", {}, String(gi + 1));
-                badge.style.cssText = "position:absolute;right:-3px;top:-4px;min-width:11px;height:11px;line-height:11px;"
-                    + "text-align:center;border-radius:6px;background:#3f6f88;color:#eaf6ff;"
-                    + "font:bold 8px/11px Arial,sans-serif;padding:0 2px;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.6)";
-                chip.appendChild(badge);
-                chip.onclick = event => event.stopPropagation();
-                // 在轨道上拖动 = 改这一条的秒数
-                chip.onpointerdown = event => {
-                    event.stopPropagation();
-                    event.preventDefault();
-                    const rect = track.getBoundingClientRect();
-                    const move = moveEvent => {
-                        const next = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
-                        guide.seconds = Math.round(next * groupSecs * 10) / 10;
-                        chip.style.left = `${(next * 100).toFixed(2)}%`;
-                        chip.title = `${guide.name} · ${guide.seconds.toFixed(1)}s`;
-                    };
-                    move(event);
-                    try { chip.setPointerCapture(event.pointerId); } catch {}
-                    const up = () => {
-                        chip.removeEventListener("pointermove", move);
-                        chip.removeEventListener("pointerup", up);
-                        persistState();
-                        renderGroups();
-                    };
-                    chip.addEventListener("pointermove", move);
-                    chip.addEventListener("pointerup", up);
-                };
-                track.appendChild(chip);
-            });
-            if (!guides.length) {
-                const hint = make("div", {}, t("Click the guide button to add a picture anchor"));
-                hint.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;"
-                    + "color:#3f5361;font:8px/1 Arial,sans-serif;pointer-events:none;letter-spacing:.2px";
-                track.appendChild(hint);
-            }
-            mid.appendChild(track);
             block.append(mid);
-            // 右：操作列（加引导图 / 接续开关 / 删除）
+            // 右：操作列（接续开关 / 删除）
             const ops = make("div");
             ops.style.cssText = "display:flex;align-items:center;justify-content:flex-end;gap:3px";
-            const guideBtn = make("button");
-            guideBtn.style.cssText = "border:0;background:transparent;display:flex;align-items:center;gap:3px;"
-                + `color:${guides.length ? "#0aa4d6" : "#5d7385"};font:10px/1 Arial,sans-serif;cursor:pointer;padding:2px 4px;border-radius:3px`;
-            guideBtn.appendChild(guideIcon(guides.length ? "#0aa4d6" : "#5d7385", 14));
-            if (guides.length) {
-                const count = make("span", {}, String(guides.length));
-                count.style.cssText = "font:bold 9px/1 Arial,sans-serif";
-                guideBtn.appendChild(count);
-            }
-            guideBtn.title = t("Guide image: anchor a picture at a second inside this group");
-            guideBtn.onmouseenter = () => { guideBtn.style.background = "rgba(10,164,214,.14)"; };
-            guideBtn.onmouseleave = () => { guideBtn.style.background = "transparent"; };
-            guideBtn.onclick = (event) => {
-                event.stopPropagation();
-                openGuideEditor(index);
-            };
-            ops.appendChild(guideBtn);
             if (index > 0) {
                 const contOn = group.cont !== false;
                 const contBtn = make("button", {}, contOn ? "⇄" : "✂");
@@ -1866,7 +1791,9 @@ function nodeColorToCss(value) {
         const baseDuration = brGroups.length
             ? Number(brGroups[brGroups.length - 1].duration) || 5
             : 5;
-        const group = { prompt: "", duration: baseDuration };
+        // 新分组默认不接续：实测接续段每步慢约 29%（keyframe cond 行打穿稀疏注意力），
+        // 而不接续的段间拼接肉眼也看不出跳脸。需要时在分组右侧手动打开。
+        const group = { prompt: "", duration: baseDuration, cont: false };
         brGroups.push(group);
         brActive = brGroups.length - 1;
         loadGroupIntoEditor(group.prompt);
@@ -2082,6 +2009,7 @@ function nodeColorToCss(value) {
     function syncLayout(height = userHeight, writeNode = false) {
         if (layoutLock) return;
         layoutLock = true;
+        syncDomWidgetWidth();
         try {
             const numericHeight = Number(height);
             const nextHeight = Number.isFinite(numericHeight)
@@ -2113,6 +2041,7 @@ function nodeColorToCss(value) {
         // 原生控件行 + 面板五行内容的最小高度；低于它 DOM 会溢出节点边框
         if (Number.isFinite(nextHeight) && nextHeight < 720) this.size[1] = 720;
         previousOnResize?.apply(this, args);
+        syncDomWidgetWidth();
         if (layoutLock || !Number.isFinite(nextHeight)) return;
         syncLayout(nextHeight, false);
         persistState();
@@ -2790,53 +2719,13 @@ function nodeColorToCss(value) {
             video.onerror = () => reject(new Error("Unable to read reference video")); video.src = url;
         });
     }
-    /** 引导图条目按「引导槽位」命名，实际文件存在 savedState.guides 里，不在 media 中。 */
-    const GUIDE_SLOT = /^guide_(\d+)_(\d+)$/;
-    function guideEntryFromSlot(slot) {
-        const match = GUIDE_SLOT.exec(String(slot || ""));
-        if (!match) return null;
-        const list = savedState.guides?.[Number(match[1])];
-        if (!Array.isArray(list)) return null;
-        const guide = list[Number(match[2])];
-        return guide && guide.name ? { name: guide.name, kind: "image", seconds: Number(guide.seconds) || 0 } : null;
-    }
-    /**
-     * 引导图列表（只用于优化器和时间条展示）。
-     *
-     * 对齐官方 MiniMaxH3AddGuide：引导帧只作为 minimax_keyframes 的 cond 段锚点，
-     * **不进入文本序列、不占用 <Picture n>**——所以这里不给它们分配图片编号，
-     * 参考图仍从 <Picture 1> 开始。
-     */
-    function activeGuideSpecs() {
-        return (savedState.guides?.[brActive] || [])
-            .map((guide, index) => ({ guide, index }))
-            .filter(item => item.guide?.name)
-            .map(item => ({
-                slot: `guide_${brActive}_${item.index}`,
-                kind: "image",
-                label: `guide frame ${item.index + 1}`,
-                seconds: Number(item.guide.seconds) || 0,
-                note: String(item.guide.note || "").trim(),
-            }));
-    }
     function optimizerMediaSpecs() {
         const specs = [];
-        // 引导图要发给优化器"看"（VLM 认图），但不占 <Picture n>：
-        // label 用描述性名称，避免 LLM 把不存在的标签写进最终提示词。
-        const pushGuides = () => {
-            activeGuideSpecs().forEach(spec => specs.push({
-                slot: spec.slot,
-                kind: "image",
-                label: spec.label,
-                guideSeconds: spec.seconds,
-            }));
-        };
         if (state.mode === "text_keyframes") {
             const task = resolvedTaskType();
             const frames = ["first_frame", "last_frame"].filter(slot => media.has(slot));
             frames.forEach((slot, index) => specs.push({ slot, kind: "image", label: task === "FL2VA" ? `picture ${index + 1}` : `<picture ${index + 1}>` }));
             if (media.has("hybrid_audio")) specs.push({ slot: "hybrid_audio", kind: "audio", label: "<audio 1>" });
-            pushGuides();
             return specs;
         }
         const images = [...media.entries()].filter(([slot, entry]) => slot.startsWith("ref_image_") && entry?.kind === "image").sort((a,b) => a[0].localeCompare(b[0]));
@@ -2847,7 +2736,6 @@ function nodeColorToCss(value) {
         let audioOrdinal = 1;
         videos.forEach(([slot, entry]) => { if (!entry.muted) specs.push({ slot, kind: "audio", label: `<audio ${audioOrdinal++}>`, labelOnly: true }); });
         audios.forEach(([slot]) => specs.push({ slot, kind: "audio", label: `<audio ${audioOrdinal++}>` }));
-        pushGuides();
         return specs;
     }
     async function optimizerMediaPayload(specs) {
@@ -2856,12 +2744,9 @@ function nodeColorToCss(value) {
         let runninghubImages = 0;
         let runninghubVideo = false;
         for (const spec of specs) {
-            const entry = media.get(spec.slot) || guideEntryFromSlot(spec.slot);
+            const entry = media.get(spec.slot);
             if (!entry) continue;
             const item = { kind: spec.kind, label: spec.label, labelOnly: !!spec.labelOnly };
-            // 引导图额外带时间点：后端要告诉 LLM"这张图锚在第几秒"
-            if (Number.isFinite(spec.guideSeconds)) item.guide_seconds = spec.guideSeconds;
-            if (spec.note) item.guide_note = spec.note;
             if (optimizerSettings?.read_media !== false && spec.kind === "image") {
                 if (!runninghub || runninghubImages < 8) item.images = [await lowImageData(fileUrl(entry.name))];
                 runninghubImages++;
@@ -2880,9 +2765,7 @@ function nodeColorToCss(value) {
         return JSON.stringify({
             group: brActive,
             task, duration, mode, context,
-            // 引导图参与签名：换了图、挪了秒数或改了用途都必须重算，不能吃旧缓存
-            guides: (savedState.guides?.[brActive] || []).map(g => [g?.name || "", Number(g?.seconds) || 0, String(g?.note || "")]),
-            media: specs.map(spec => [spec.slot, spec.kind, spec.label, (media.get(spec.slot) || guideEntryFromSlot(spec.slot))?.name || "", !!media.get(spec.slot)?.muted]),
+            media: specs.map(spec => [spec.slot, spec.kind, spec.label, media.get(spec.slot)?.name || "", !!media.get(spec.slot)?.muted]),
             settings: optimizerSettings && [optimizerSettings.provider, optimizerSettings.assistant_service, optimizerSettings.rule, optimizerSettings.api_url, optimizerSettings.model, optimizerSettings.protocol, optimizerSettings.read_media, optimizerSettings.unload_after, optimizerSettings.max_tokens],
         });
     }
@@ -2893,17 +2776,9 @@ function nodeColorToCss(value) {
                 label: spec.label,
                 role: spec.slot === "first_frame" ? "exact_first_frame" : "exact_last_frame",
             }));
-        // 中段引导图：告诉优化器"第几秒会锚定哪张图"。它们不是提示词标签（官方语义里
-        // 引导帧不进文本），所以只提供时间点，让模型用文字描述那个时刻的画面。
-        const guides = activeGuideSpecs().map(spec => ({
-            label: spec.label,
-            at_seconds: spec.seconds,
-            note: spec.note || "",
-        }));
         return {
             main_mode: mode,
             keyframes,
-            mid_guide_images: guides,
             audio_mode: audioMode,
         };
     }
@@ -3122,6 +2997,29 @@ function nodeColorToCss(value) {
         fpsSelect.style.cssText = "width:92px;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:12px Arial,sans-serif";
         const fpsRow = make("label"); fpsRow.append(make("span", {}, t("Upload fps")), fpsSelect);
         inputs.appendChild(fpsRow);
+        /* BlackRinRemake video-scale v1 */
+        // 上传分辨率：源文件只在解码阶段吃内存与时间（编码前已按画布预算缩放），
+        // 所以压缩副本不影响画质，只让解码更轻。留空=原始分辨率。
+        const heightSelect = make("select");
+        [[0, t("Original size")], [720, "720p"], [480, "480p"]].forEach(([value, text]) => {
+            const option = make("option", null, text);
+            option.value = String(value);
+            heightSelect.appendChild(option);
+        });
+        heightSelect.style.cssText = "width:92px;box-sizing:border-box;background:#1d2b36;color:#dce7ee;border:1px solid #3a4d5b;border-radius:4px;padding:4px 6px;font:12px Arial,sans-serif";
+        const heightRow = make("label"); heightRow.append(make("span", {}, t("Upload resolution")), heightSelect);
+        inputs.appendChild(heightRow);
+        heightSelect.value = String(Number(entry.refHeight) || 0);
+        const heightHint = make("span"); heightHint.style.cssText = "color:#7f97a6;font-size:10px"; inputs.appendChild(heightHint);
+        const paintHeightHint = () => {
+            const target = Number(heightSelect.value) || 0;
+            heightHint.textContent = target
+                ? (isChineseLocale() ? `保存时生成 ${target}p 副本，源文件保留` : `Saves a ${target}p copy, source kept`)
+                : (isChineseLocale() ? "保持原始分辨率" : "Keep the original resolution");
+        };
+        heightSelect.onchange = paintHeightHint;
+        paintHeightHint();
+        /* /BlackRinRemake video-scale v1 */
         const framesHint = make("span"); framesHint.style.cssText = "color:#7f97a6;font-size:10px"; inputs.appendChild(framesHint);
         dialog.appendChild(inputs);
         const multiHint = typeof brGroups !== "undefined" && brGroups.length >= 2
@@ -3203,7 +3101,48 @@ function nodeColorToCss(value) {
             else clampRange(Math.min(start, duration - target), Math.min(duration, Math.min(start, duration - target) + target));
             paint();
         };
-        save.onclick = () => {
+        save.onclick = async () => {
+            /* BlackRinRemake video-scale v1 */
+            const targetHeight = Number(heightSelect.value) || 0;
+            const sourceName = entry.refSourceName || entry.name;
+            if (targetHeight && Number(entry.refHeight) !== targetHeight) {
+                save.disabled = true; cancel.disabled = true;
+                const savedLabel = save.textContent;
+                save.textContent = t("Compressing…");
+                try {
+                    const response = await fetch("/blackrin/minimax-h3/video/compress", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: sourceName, height: targetHeight }),
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || !data?.name) throw new Error(data?.error || `HTTP ${response.status}`);
+                    if (data.skipped) {
+                        // 源视频短边已经 ≤ 目标值：重编码只掉画质、不省解码，原地不动
+                        uploadNotice = isChineseLocale()
+                            ? `源视频已是 ${data.width}x${data.height}，短边不超过 ${targetHeight}p，无需压缩`
+                            : `Source is already ${data.width}x${data.height}; ${targetHeight}p compression skipped`;
+                    } else {
+                        entry.name = data.name;
+                        entry.refSourceName = sourceName;
+                        entry.refHeight = targetHeight;
+                    }
+                } catch (error) {
+                    uploadNotice = `${t("Compress failed")}: ${error?.message || error}`;
+                    save.disabled = false; cancel.disabled = false; save.textContent = savedLabel;
+                    close();
+                    render();
+                    return;
+                }
+                save.textContent = savedLabel;
+                save.disabled = false; cancel.disabled = false;
+            } else if (!targetHeight && entry.refHeight) {
+                if (entry.refSourceName) entry.name = entry.refSourceName;
+                delete entry.refHeight; delete entry.refSourceName;
+            }
+            /* /BlackRinRemake video-scale v1 */
+            // 文件名可能已经换成压缩副本：隐藏输入槽必须同步，否则执行时仍读源文件
+            setMediaWidget(node, slot, entry.name);
             const trimmed = end - start > minSelection && (start > 0.001 || end < duration - 0.001);
             entry.trimStart = trimmed ? start : 0;
             entry.trimEnd = trimmed ? end : null;
@@ -3748,7 +3687,7 @@ function nodeColorToCss(value) {
         item.dataset.ghh3DropSlot = slot;
         const reorderIndicator = make("div", {}, "✥"); reorderIndicator.className = "ghh3-reorder-indicator"; item.appendChild(reorderIndicator);
         if (entry.kind === "image") { const img = make("img"); img.src = fileUrl(entry.name); img.draggable = false; item.appendChild(img); }
-        else if (entry.kind === "video") { const video = make("video"); video.src = fileUrl(entry.name); video.muted = !!entry.muted; video.preload = "metadata"; video.draggable = false; item.appendChild(video); const play = make("button", {}, "▶"); play.className = "ghh3-play"; play.onclick = e => { e.stopPropagation(); video.muted = !!entry.muted; video.paused ? video.play() : video.pause(); }; item.appendChild(play); const clipTrim = make("button", {}, "✂"); clipTrim.className = "ghh3-video-trim-button"; clipTrim.title = t("Trim video"); clipTrim.onclick = e => { e.stopPropagation(); openVideoTrimEditor(slot, entry); }; item.appendChild(clipTrim); if (entry.trimEnd > entry.trimStart || (Number(entry.refFps) || 24) !== 24) { const range = entry.trimEnd > entry.trimStart ? `${formatAudioMediaTime(entry.trimStart)}-${formatAudioMediaTime(entry.trimEnd)}s` : ""; const fps = (Number(entry.refFps) || 24) !== 24 ? ` ${Number(entry.refFps)}fps` : ""; item.appendChild(make("div", {}, `${range}${fps}`.trim())).className = "ghh3-trim-range-badge"; } }
+        else if (entry.kind === "video") { const video = make("video"); video.src = fileUrl(entry.name); video.muted = !!entry.muted; video.preload = "metadata"; video.draggable = false; item.appendChild(video); const play = make("button", {}, "▶"); play.className = "ghh3-play"; play.onclick = e => { e.stopPropagation(); video.muted = !!entry.muted; video.paused ? video.play() : video.pause(); }; item.appendChild(play); const clipTrim = make("button", {}, "✂"); clipTrim.className = "ghh3-video-trim-button"; clipTrim.title = t("Trim video / fps / resolution"); clipTrim.onclick = e => { e.stopPropagation(); openVideoTrimEditor(slot, entry); }; item.appendChild(clipTrim); if (entry.trimEnd > entry.trimStart || (Number(entry.refFps) || 24) !== 24) { const range = entry.trimEnd > entry.trimStart ? `${formatAudioMediaTime(entry.trimStart)}-${formatAudioMediaTime(entry.trimEnd)}s` : ""; const fps = (Number(entry.refFps) || 24) !== 24 ? ` ${Number(entry.refFps)}fps` : ""; item.appendChild(make("div", {}, `${range}${fps}`.trim())).className = "ghh3-trim-range-badge"; } }
         else {
             item.appendChild(make("div", { height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#8ea3b4", fontSize: "22px" }, "♫"));
             const audio = new Audio(fileUrl(entry.name));
@@ -3794,6 +3733,12 @@ function nodeColorToCss(value) {
                 refreshPromptMediaPreviews(); persistState(); render();
             };
             item.appendChild(sound);
+            /* BlackRinRemake frame-grab v1 */
+            const grabBtn = make("button", {}, "\u2316");
+            grabBtn.className = "ghh3-video-grab-button";
+            grabBtn.title = t("Grab frame");
+            grabBtn.onclick = e => { e.stopPropagation(); entry.grabOpen = !entry.grabOpen; persistState(); render(); };
+            item.appendChild(grabBtn);
             const video = item.querySelector("video");
             const oldPlay = item.querySelector(".ghh3-play");
             if (oldPlay) oldPlay.style.display = "none";
@@ -3842,7 +3787,8 @@ function nodeColorToCss(value) {
         let clickTimer;
         installMediaLongPressReorder(item, slot);
         item.onclick = e => { if (e.target.closest("button") || Date.now() < suppressMediaClickUntil) return; e.stopPropagation(); clearTimeout(clickTimer); clickTimer = setTimeout(() => insertTag(entry.kind, slot), 220); };
-        item.ondblclick = e => { if (e.target.closest("button") || Date.now() < suppressMediaClickUntil) return; e.stopPropagation(); clearTimeout(clickTimer); if (entry.kind === "video") insertVideoAudioTag(slot); };
+        item.ondblclick = e => { if (e.target.closest("button") || Date.now() < suppressMediaClickUntil) return; e.stopPropagation(); clearTimeout(clickTimer); choose(slot); };
+        item.oncontextmenu = e => { if (entry.kind !== "video") return; e.preventDefault(); e.stopPropagation(); clearTimeout(clickTimer); insertVideoAudioTag(slot); };
         item.onpointerenter = () => { hoverPasteSlot = slot; };
         item.onpointerleave = () => { if (hoverPasteSlot === slot) hoverPasteSlot = undefined; };
         item.ondragover = e => { e.preventDefault(); e.stopPropagation(); };
@@ -3882,7 +3828,90 @@ function nodeColorToCss(value) {
         }
         d.onclick = () => choose(slot); d.onpointerenter = () => { hoverPasteSlot = slot; }; d.onpointerleave = () => { if (hoverPasteSlot === slot) hoverPasteSlot = undefined; }; d.ondragover = e => { e.preventDefault(); e.stopPropagation(); }; d.ondrop = e => { e.preventDefault(); e.stopPropagation(); accept(e.dataTransfer.files, slot); }; return d;
     }
+    /* BlackRinRemake frame-grab v1 */
+    function buildFrameGrab(container, slot, entry) {
+        const video = make("video");
+        video.src = fileUrl(entry.name);
+        video.muted = true; video.playsInline = true; video.controls = true; video.preload = "metadata";
+        video.addEventListener("click", e => e.stopPropagation());
+        const row = make("div"); row.className = "ghh3-frame-grab-row";
+        const range = make("input"); range.type = "range"; range.min = "0"; range.step = "0.01"; range.value = "0";
+        const timeEl = make("span", {}, "0.00s / f0"); timeEl.className = "ghh3-frame-grab-time";
+        const grab = make("button", {}, t("Grab this frame")); grab.className = "ghh3-frame-grab-btn";
+        const close = make("button", {}, "\u00d7"); close.className = "ghh3-frame-grab-close"; close.title = "close";
+        close.onclick = e => { e.stopPropagation(); entry.grabOpen = false; persistState(); render(); };
+        const fmt = s => `${Number(s).toFixed(2)}s`;
+        video.addEventListener("loadedmetadata", () => { range.max = String(Math.max(0, video.duration - 0.001)); refresh(); });
+        const refresh = () => {
+            const s = Number(range.value) || 0;
+            timeEl.textContent = `${fmt(s)} / ${fmt(video.duration || 0)} \u00b7 ${t("Frame")} ${Math.round(s * 24)}`;
+        };
+        range.addEventListener("input", () => {
+            refresh();
+            if (Number.isFinite(video.duration)) video.currentTime = Math.min(Number(range.value), Math.max(0, video.duration - 0.001));
+        });
+        video.addEventListener("seeked", () => {
+            if (Math.abs(video.currentTime - (Number(range.value) || 0)) > 0.05) { range.value = String(video.currentTime); refresh(); }
+        });
+        grab.onclick = async e => {
+            e.stopPropagation();
+            grab.disabled = true; grab.classList.add("ghh3-grabbing");
+            try {
+                const target = Number(range.value) || 0;
+                const dataUrl = await captureVideoFrame(fileUrl(entry.name), target);
+                const blob = await (await fetch(dataUrl)).blob();
+                const sec = target.toFixed(2).replace(".", "_");
+                const file = new File([blob], `frame_${entry.name.replace(/[\\/:*?"<>|]/g, "_")}_${sec}s.png`, { type: "image/png" });
+                const beforeOrder = promptMediaIdentityOrder();
+                const driveSelection = captureDriveAudioSelection();
+                const previousAudioCount = state.mode === "text_keyframes"
+                    ? (media.has("hybrid_audio") ? 1 : 0) : allReferenceAudioCount();
+                const slotName = nextSlot("image");
+                if (!slotName) { uploadNotice = t("No free ref_image slot"); refreshPromptMediaPreviews(); persistState(); render(); return; }
+                const name = await uploadFile(file);
+                const newEntry = { name, kind: "image" };
+                vacantMediaSlots.delete(slotName);
+                vacantMediaEntries.delete(slotName);
+                media.set(slotName, newEntry); setMediaWidget(node, slotName, name);
+                syncAudioModeAfterMediaChange(slotName, previousAudioCount);
+                remapPromptAfterMediaChange(beforeOrder, false);
+                restoreDriveAudioSelection(driveSelection, true);
+                refreshPromptMediaPreviews(newEntry);
+                persistState();
+                render();
+            } catch (err) {
+                console.error("[MiniMax H3 Integration] frame grab failed:", err);
+                grab.disabled = false; grab.classList.remove("ghh3-grabbing");
+            }
+        };
+        row.append(range, timeEl, grab, close);
+        container.append(video, row);
+        refresh();
+    }
+    function captureVideoFrame(url, time) {
+        return new Promise((resolve, reject) => {
+            const video = document.createElement("video");
+            video.crossOrigin = "anonymous"; video.muted = true; video.preload = "auto";
+            video.onloadedmetadata = async () => {
+                try {
+                    const target = Math.min(time, Math.max(0, (Number.isFinite(video.duration) ? video.duration : time) - 0.001));
+                    await new Promise((done, fail) => {
+                        const timeout = setTimeout(() => fail(new Error("Video frame seek timed out")), 10000);
+                        video.onseeked = () => { clearTimeout(timeout); done(); };
+                        video.currentTime = target;
+                    });
+                    const canvasEl = document.createElement("canvas");
+                    canvasEl.width = video.videoWidth; canvasEl.height = video.videoHeight;
+                    canvasEl.getContext("2d", { alpha: false }).drawImage(video, 0, 0);
+                    resolve(canvasEl.toDataURL("image/png"));
+                } catch (error) { reject(error); }
+            };
+            video.onerror = () => reject(new Error("Unable to read reference video"));
+            video.src = url;
+        });
+    }
     function render(preserveAdvancedSettings = false, preservePromptTags = false) {
+        syncDomWidgetWidth();
         if (!preservePromptTags) normalizePromptTagFormat();
         updateAdvancedVisibility(preserveAdvancedSettings);
         root.querySelector(".ghh3-dynamic")?.remove(); const box = make("div"); box.className = "ghh3-box ghh3-dynamic";
@@ -3895,6 +3924,12 @@ function nodeColorToCss(value) {
             const grid = make("div"); grid.className = "ghh3-grid"; const entries = [...media.entries()].filter(([slot]) => !["first_frame", "last_frame", "hybrid_audio"].includes(slot)).sort((a,b) => typeOrder[a[1].kind] - typeOrder[b[1].kind] || a[0].localeCompare(b[0]));
             if (!entries.length) grid.appendChild(addDrop(null, true));
             else { entries.forEach(([s,e]) => grid.appendChild(card(s,e))); grid.appendChild(addDrop()); }
+            /* BlackRinRemake frame-grab v1 */
+            for (const [vs, ve] of entries.filter(([s, e]) => e.kind === "video" && e.grabOpen)) {
+                const wrap = make("div"); wrap.className = "ghh3-frame-grab";
+                buildFrameGrab(wrap, vs, ve);
+                box.appendChild(wrap);
+            }
             if (uploadNotice) grid.appendChild(make("div", {}, uploadNotice)).className = "ghh3-limit";
             box.appendChild(grid);
         }
@@ -3923,6 +3958,16 @@ function nodeColorToCss(value) {
         if (promptActive && !prompt.readOnly) {
             event.preventDefault(); event.stopImmediatePropagation();
             const text = event.clipboardData?.getData("text/plain") || "";
+            // 粘的是分段包 JSON 时：直接建组，不往编辑器里塞几千字
+            const pasted = String(text || "").trim();
+            if (pasted.startsWith("[") || pasted.startsWith("{")) {
+                const pending = importSegmentsText(pasted, "replace");
+                if (pending && typeof pending.then === "function") {
+                    pending.then(result => { if (!result.ok && result.silent) notifySegments("", false); }).catch(error => notifySegments(String(error?.message || error), true));
+                    return;
+                }
+                if (pending.ok || !pending.silent) return;
+            }
             const before = promptSnapshot();
             const [start, end] = selectionOffsets();
             prompt.setRangeText(text, start, end, "end");
@@ -4087,12 +4132,6 @@ function nodeColorToCss(value) {
                 optimizerSettings = restored.optimizer || optimizerSettings;
                 refreshOptimizerName(); refreshPromptConnection();
                 optimizerCache = restored.optimizerCache || null;
-                // 引导图必须一起还原：否则刷新后前端状态为空，下一次 persist 会把
-                // 空 guides 写回 widget，把已存的引导图抹掉（数据丢失）
-                if (restored.guides && typeof restored.guides === "object") {
-                    savedState.guides = restored.guides;
-                    renderGroups();
-                }
                 if (restored.audioModeByMode && typeof restored.audioModeByMode === "object") {
                     for (const mode of ["text_keyframes", "all_reference"]) {
                         delete audioModeByMode[mode];
@@ -4262,7 +4301,7 @@ function collectTriggerWords() {
 // 组成依赖环（DependencyCycleError），只能在序列化提示词前烤成纯文本状态。
 function bakeTriggerWordsIntoState() {
     for (const n of app.graph?._nodes || []) {
-        if (n.comfyClass !== NODE || n.mode === 4) continue;
+        if (!isPanelNode(n.comfyClass) || n.mode === 4) continue;
         const stateWidget = (n.widgets || []).find(w => w.name === "gh_state_json");
         if (!stateWidget) continue;
         let panelState = {};
@@ -4309,7 +4348,7 @@ app.registerExtension({
         };
         return;
     }
-    if (nodeData.name !== NODE) return;
+    if (!isPanelNode(nodeData.name)) return;
     const previous = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function() {
         const result = previous?.apply(this, arguments);

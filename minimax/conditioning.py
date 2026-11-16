@@ -292,12 +292,8 @@ def build_conditioning(
     ref_videos=None,
     ref_video_audios=None,
     ref_audios=None,
-    guide_images=None,
 ):
-    """guide_images: [(image, frame_idx), ...] 中段引导图，按绝对像素帧号钉入。
-
-    与 first_frame/last_frame 走同一套 keyframe 机制（永不去噪、每步重注入），
-    所以单帧就够、不要求 17k+5 对齐。frame_idx 支持负数（从结尾倒数）。
+    """first_frame/last_frame 走 H3 原生 keyframe 机制（永不去噪、每步重注入）。
     """
     if width % 32 or height % 32:
         raise ValueError("MiniMax H3 width and height must be divisible by 32")
@@ -359,26 +355,6 @@ def build_conditioning(
             "video_vae": video_vae,
         })
 
-    # 中段引导图：任意像素帧号锚一张图（单帧即可，无需网格对齐）
-    #
-    # 对齐官方 MiniMaxH3AddGuide 语义：引导帧只作为 minimax_keyframes 打包成
-    # 独立的 "cond" 段（靠 resolved_frame_index 定位），**不进入文本序列**、
-    # 不占用 <Picture n> 编号。首/尾帧是例外——官方 fl2va 里它们既进 cond 段
-    # 又进文本，所以它们才会出现在 keyframe_images 里。
-    for guide_index, (guide_image, raw_frame_idx) in enumerate(guide_images or (), 1):
-        if guide_image is None:
-            continue
-        resolved = int(raw_frame_idx or 0)
-        if resolved < 0:
-            resolved = frame_count + resolved
-        resolved = max(0, min(frame_count - 1, resolved))
-        image = resize_image(guide_image[:1], width, height, "center")
-        keyframes.append({
-            "resolved_frame_index": resolved,
-            "latent": video_vae.encode(image),
-            "source_image": guide_image[:1].detach().cpu(),
-            "video_vae": video_vae,
-        })
 
     real_ref_items: list[dict] = []
     real_ref_blocks: list[dict] = []

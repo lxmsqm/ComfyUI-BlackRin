@@ -94,6 +94,30 @@ def _size_short_edge(width, height, low, high):
     )
 
 
+# ---------------------------------------------------------------------------
+# 文本编码器缓存
+#   实测（RX 9070 XT / 13.93GiB int4 32B 编码器）：编码器常驻 host RAM、按层流到
+#   GPU 算，所以「每次 execute 都新建一个 CLIP」会让权重布局和页缓存每次重建，
+#   encode 落在 30~120s；复用同一个 CLIP 对象时只在 13~30s 档。
+#   这里只缓存「文件已解析好的 CLIP 对象」，显存仍由 _release_text_encoder 释放，
+#   不影响底模装显存。
+# ---------------------------------------------------------------------------
+_TEXT_ENCODER_CACHE = {}
+
+
+def _cached_clip(clip_name):
+    key = _normalize_model_name(clip_name)
+    cached = _TEXT_ENCODER_CACHE.get(key)
+    if cached is not None:
+        logging.info("BlackRin 文本编码器复用缓存：%s", key)
+        return cached
+    for stale in list(_TEXT_ENCODER_CACHE):
+        _TEXT_ENCODER_CACHE.pop(stale, None)      # 换模型：只留一份，其余放掉
+    clip = nodes.CLIPLoader().load_clip(key, "minimax")[0]
+    _TEXT_ENCODER_CACHE[key] = clip
+    return clip
+
+
 def _resize_to(image, size):
     # lanczos 会过一遍 8bit：本来就等于目标尺寸的图原样返回，不做任何重采样
     if (image.shape[2], image.shape[1]) == size:
@@ -304,7 +328,7 @@ class BlackRin_H3ImageIntegration(io.ComfyNode):
             for image in images
         ]
 
-        clip = nodes.CLIPLoader().load_clip(_normalize_model_name(clip_name), "minimax")[0]
+        clip = _cached_clip(clip_name)
         vae = nodes.VAELoader().load_vae(_normalize_model_name(vae_name))[0]
 
         refs = []
@@ -357,8 +381,7 @@ class BlackRin_H3ImageIntegration(io.ComfyNode):
             )
 
         # 21GB 的 33B 底模不能和文本编码器同时待命：编完立刻放掉 CLIP，再加载底模
-        _release_text_encoder(clip)
-        del clip
+        _release_text_encoder(clip)   # 只放显存；CLIP 对象留在缓存里，下次提示词不用重读 13.9GB
         model = _load_main_unet(unet_name)
         logging.info(
             "BlackRin 图片一体化：画布 %dx%d · 参考图 %d 张 · 视觉短边 %s · 主模型已就绪（采样在画布上的采样节点里做）",

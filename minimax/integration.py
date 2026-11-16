@@ -343,6 +343,30 @@ def _normalize_model_name(name):
     return name.replace("\\", "/")
 
 
+# ---------------------------------------------------------------------------
+# 文本编码器缓存
+#   实测（RX 9070 XT / 13.93GiB int4 32B 编码器）：编码器常驻 host RAM、按层流到
+#   GPU 算，所以「每次 execute 都新建一个 CLIP」会让权重布局和页缓存每次重建，
+#   encode 落在 30~120s；复用同一个 CLIP 对象时只在 13~30s 档。
+#   这里只缓存「文件已解析好的 CLIP 对象」，显存仍由 _release_text_encoder 释放，
+#   不影响底模装显存。
+# ---------------------------------------------------------------------------
+_TEXT_ENCODER_CACHE = {}
+
+
+def _cached_clip(clip_name):
+    key = _normalize_model_name(clip_name)
+    cached = _TEXT_ENCODER_CACHE.get(key)
+    if cached is not None:
+        logging.info("BlackRin 文本编码器复用缓存：%s", key)
+        return cached
+    for stale in list(_TEXT_ENCODER_CACHE):
+        _TEXT_ENCODER_CACHE.pop(stale, None)      # 换模型：只留一份，其余放掉
+    clip = nodes.CLIPLoader().load_clip(key, "minimax")[0]
+    _TEXT_ENCODER_CACHE[key] = clip
+    return clip
+
+
 def _model_path(folder, name):
     """解析模型文件全路径；正斜杠失败时按 basename 兜底匹配（大小写不敏感）。"""
     normalized = _normalize_model_name(name)
@@ -889,7 +913,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
         upscale_width, upscale_height = calculate_canvas(
             aspect, upscale_megapixels, source_width, source_height
         )
-        clip = nodes.CLIPLoader().load_clip(clip_name, "minimax")[0]
+        clip = _cached_clip(clip_name)
         video_vae = nodes.VAELoader().load_vae(video_vae_name)[0]
         audio_vae = nodes.VAELoader().load_vae(audio_vae_name)[0]
 
@@ -1086,8 +1110,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                         "BlackRin 多段条件编码完成：%d 组（合计 %d 帧 ≈ %.1f 秒 @24fps）",
                         len(groups), total_visible, total_visible / 24.0,
                     )
-                    _release_text_encoder(clip)
-                    clip = None
+                    _release_text_encoder(clip)   # 只放显存；CLIP 对象留在缓存里
                     main_model = _load_main_unet(unet_name)
                     bundle = {
                         "internal": True,
@@ -1110,8 +1133,7 @@ class BlackRin_MiniMaxH3Integration(io.ComfyNode):
                 first, last, refs, ref_videos, video_audio, audios,
             )
         finally:
-            _release_text_encoder(clip)
-            clip = None
+            _release_text_encoder(clip)   # 只放显存；CLIP 对象留在缓存里
         main_model = _load_main_unet(unet_name)
         bundle = {
             "positive": result[0], "av_latent": result[1],

@@ -1,3 +1,9 @@
+try:
+    from . import path_compat
+    path_compat.install()
+except Exception as _e:
+    print("[BlackRin] path_compat failed:", _e)
+
 # ROCm/MIOpen：Conv3d 退化形状（stride==kernel）在 A 卡上慢 7 万倍，先挂全局 matmul 补丁。
 # 覆盖 comfy.ops 全部 Conv3d（含 mixed_precision/fp8）与 torch.nn.Conv3d，
 # 所有 Qwen-VL 系编码器（H3 / Qwen-Image-Edit / Krea2 / Flux3 / HiDream o1 …）一起受益。

@@ -14,3 +14,6 @@ served_check.js
 
 *.bak-*
 *.bak
+
+# 多 LoRA 加载器的本地数据（预设/触发词/Civitai 配置，不入库）
+multilora/user_data/

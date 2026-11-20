@@ -72,6 +72,14 @@ if _seed.get("migrated"):
           f"（{_seed['services']} 服务 / {_seed['rules_image']} 图片规则 / {_seed['rules_text']} 文本规则）"
           f" → {_seed['path']}")
 
+# ── 多 LoRA 加载器（原独立包 ComfyUI-MultiLora 并入）──────────────────────────
+# 节点 id 保持 "MultiLoraLoader"，旧工作流零重连；前端在 web/js/multi_lora_003056.js，
+# HTTP 接口挂在 /blackrin/multi_lora/*（见 multilora/nodes.py）。
+from .multilora import MultiLoraLoader as _MultiLoraLoader  # noqa: E402
+
+NODE_CLASS_MAPPINGS["MultiLoraLoader"] = _MultiLoraLoader
+NODE_DISPLAY_NAME_MAPPINGS["MultiLoraLoader"] = "Multi LoRA Loader"
+
 WEB_DIRECTORY = "./web"
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 

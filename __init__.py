@@ -80,6 +80,17 @@ from .multilora import MultiLoraLoader as _MultiLoraLoader  # noqa: E402
 NODE_CLASS_MAPPINGS["MultiLoraLoader"] = _MultiLoraLoader
 NODE_DISPLAY_NAME_MAPPINGS["MultiLoraLoader"] = "Multi LoRA Loader"
 
+# ── VOSR 2.0 图片/视频超分（原独立包 ComfyUI-VOSR2 并入，Apache-2.0，见 vosr2/UPSTREAM.md）──
+# 上游是 V3（comfy_entrypoint）节点；本包走传统 NODE_CLASS_MAPPINGS 分支后 ComfyUI 不会再走 V3，
+# 所以按 SOL 的写法手动 GET_SCHEMA() 并表。节点 id 与显示名保持上游原名，旧工作流零重连。
+from .vosr2.nodes_vosr import VOSR2ModelLoader as _VOSR2ModelLoader  # noqa: E402
+from .vosr2.nodes_vosr import VOSR2Upscale as _VOSR2Upscale  # noqa: E402
+
+for _vosr_cls in (_VOSR2ModelLoader, _VOSR2Upscale):
+    _vosr_schema = _vosr_cls.GET_SCHEMA()
+    NODE_CLASS_MAPPINGS[_vosr_schema.node_id] = _vosr_cls
+    NODE_DISPLAY_NAME_MAPPINGS[_vosr_schema.node_id] = _vosr_schema.display_name or _vosr_schema.node_id
+
 WEB_DIRECTORY = "./web"
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 

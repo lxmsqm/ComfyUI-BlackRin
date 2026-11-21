@@ -1,0 +1,28 @@
+ComfyUI-BlackRin :: vosr2/
+=========================
+
+本目录代码为第三方作品的派生（vendored）副本，原作者与许可如下：
+
+- VOSR 2.0 ComfyUI 节点封装
+  ComfyUI-VOSR2 — https://github.com/ylchen333/ComfyUI-VOSR2
+  Copyright (c) ylchen333 — Apache License 2.0
+
+- VOSR / VOSR 2.0 模型与原始推理实现
+  cswry/VOSR (Rongyuan Wu 等, CVPR 2026) — https://github.com/cswry/VOSR
+  Apache License 2.0
+
+- LightningDiT 主干
+  Jingfeng Yao (HUST-VL) — Apache License 2.0
+
+- DINOv2-L 视觉编码器
+  Meta AI — https://github.com/facebookresearch/dinov2 — Apache License 2.0
+
+- Qwen-Image 2D VAE
+  Qwen / Wan / HuggingFace 团队 — Apache License 2.0
+
+- 运行环境与 attention 适配层：ComfyUI (comfyanonymous) — GPL-3.0
+
+本目录的改动清单见 UPSTREAM.md。模型权重不在本仓库内分发，
+由加载器在首次运行时从 https://huggingface.co/CSWRY/VOSR 下载，其许可以该仓库为准。
+
+Apache-2.0 全文见本目录 LICENSE。

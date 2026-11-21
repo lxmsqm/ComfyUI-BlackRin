@@ -156,3 +156,18 @@
   - `web/js/blackrin_resolution_calc.js` — 自动缩放分辨率预览
   - `web/js/blackrin_config.js` — 配置读写
 - **自己的配置：** `ComfyUI/user/default/BlackRin/config.json`（优化器服务与规则，含密钥，不入库）
+
+
+## VOSR 2.0 图片 / 视频超分（已内置）
+
+原独立包 `ComfyUI-VOSR2` 已并入本包子目录 `vosr2/`（Apache-2.0，改动见 `vosr2/UPSTREAM.md`）：
+
+| 节点 id | 名称 | 说明 |
+|---|---|---|
+| `VOSR2ModelLoader` | VOSR 2.0 Model Loader | 加载 1.4B 一步式超分包（DiT + Qwen-Image VAE + DINOv2-L） |
+| `VOSR2Upscale` | VOSR 2.0 Upscale | 一步放大；支持 **RGB / RGBA**，也支持 IMAGE 批次（视频帧） |
+
+- 权重不随包分发：首次运行自动从 [CSWRY/VOSR](https://huggingface.co/CSWRY/VOSR) 下载到 `models/vosr2/VOSR2`（约 7 GB）。
+- 原生训练分辨率 512：输出超过 512 必须 `tile_size=512`（超了画质会塌），超过 1024 再设 `vae_tile_size=1024`。
+- AMD/ROCm 实测（RX 9070 XT，tile 512 / vae_tile 1024）：512→1024 约 6 s，→2048 约 22 s，→4096 约 56 s。
+- RGBA 输入：alpha 不参与模型推理，按双三次插值放大后拼回；要严格保半透明请先 Split Alpha。

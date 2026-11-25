@@ -20,6 +20,41 @@ const STATE_COLORS = { active: "#2e9e63", bypass: "#c47f2e" };
 const anchorRegistry = new Set();
 
 const CSS_ID = "brgc-style";
+
+/**
+ * 把 DOM widget 的高度真正算进节点尺寸。
+ * nodes 2.0（Vue 渲染）下 addDOMWidget 默认不给 computeSize，
+ * 节点会停在 178×26 这种默认尺寸，面板内容整块被裁掉。
+ */
+function attachAutoHeight(node, widget, container, minWidth = 320) {
+    const fit = () => {
+        try {
+            const contentH = Math.max(36, container.scrollHeight + 8);
+            if (!widget.computeSize || widget.__brgcFit !== contentH) {
+                widget.computeSize = () => [0, contentH];
+                widget.__brgcFit = contentH;
+            }
+            const width = Math.max(minWidth, node.size?.[0] || 0);
+            const titleH = LiteGraph.NODE_TITLE_HEIGHT || 30;
+            const targetH = contentH + titleH + 10;
+            if (Math.abs((node.size?.[1] || 0) - targetH) > 3) {
+                node.setSize([width, targetH]);
+            }
+            node.setDirtyCanvas?.(true, true);
+        } catch (error) {
+            console.warn("[BlackRin 分组控制] 尺寸自适应失败", error);
+        }
+    };
+    node.__brgcFit = fit;
+    // 首次给个合理尺寸，避免先渲染成一条细缝
+    if ((node.size?.[1] || 0) < 60) {
+        const titleH = LiteGraph.NODE_TITLE_HEIGHT || 30;
+        node.setSize([Math.max(minWidth, node.size?.[0] || 0), 40 + titleH + 10]);
+    }
+    setTimeout(fit, 0);
+    requestAnimationFrame(fit);
+    return fit;
+}
 function ensureCss() {
     if (document.getElementById(CSS_ID)) return;
     const style = document.createElement("style");
@@ -109,14 +144,22 @@ function applyGroupState(groupTitle, state) {
     const matched = (app.graph.groups || []).filter(g => g.title === groupTitle);
     if (!matched.length) return;
     const seen = new Set();
+    const target = STATE_MODES[state] ?? 0;
+    let changed = false;
     for (const group of matched) {
         for (const node of groupMembers(group)) {
             if (seen.has(node.id)) continue;
             seen.add(node.id);
-            node.mode = STATE_MODES[state] ?? 0;
+            // 幂等：只在真的需要改的时候才赋值/重绘。
+            // 原来的写法每 600ms 无条件改 mode + setDirtyCanvas(true,true)，
+            // nodes 2.0（Vue 渲染）下会反复重排 DOM，表现就是面板闪烁、拖动画布发卡。
+            if (node.mode !== target) {
+                node.mode = target;
+                changed = true;
+            }
         }
     }
-    app.graph.setDirtyCanvas(true, true);
+    if (changed) app.graph.setDirtyCanvas(true, true);
 }
 
 function groupAnchors() {
@@ -147,7 +190,8 @@ app.registerExtension({
                 ensureCss();
                 const element = document.createElement("div");
                 element.className = "brgc-anchor";
-                self.addDOMWidget("所在分组", "display", element);
+                const anchorWidget = self.addDOMWidget("所在分组", "display", element);
+                const anchorFit = attachAutoHeight(self, anchorWidget, element, 240);
 
                 const refresh = () => {
                     const group = groupOf(self);
@@ -160,6 +204,7 @@ app.registerExtension({
                         element.title = "把本节点放进任意分组内";
                     }
                 };
+                requestAnimationFrame(anchorFit);
                 anchorRegistry.add(self);
                 const timer = setInterval(refresh, 600);
                 const onRemoved = self.onRemoved;
@@ -181,7 +226,8 @@ app.registerExtension({
                 ensureCss();
                 const container = document.createElement("div");
                 container.className = "brgc";
-                self.addDOMWidget("分组控制", "display", container);
+                const panelWidget = self.addDOMWidget("分组控制", "display", container);
+                const panelFit = attachAutoHeight(self, panelWidget, container, 320);
 
                 const states = { ...(self.properties?.br_group_states || {}) };
                 const pairs = (self.properties?.br_group_pairs || [])
@@ -218,6 +264,7 @@ app.registerExtension({
 
                 let lastSig = "";
                 const render = () => {
+                    // 末尾（见 render 的 finally 兜底）会调用 panelFit 重算节点高度
                     const anchors = groupAnchors();
                     const groups = [...new Set(anchors.map(n => n.br_group_title).filter(Boolean))].sort();
                     const sig = JSON.stringify([groups, pairs, states, picking, pickSide, assign]);
@@ -229,6 +276,7 @@ app.registerExtension({
                         hint.className = "brgc-empty";
                         hint.textContent = "把分组锚点放进任意分组后自动出现";
                         container.appendChild(hint);
+                        requestAnimationFrame(panelFit);   // 内容变了，节点高度跟着收
                         return;
                     }
                     const setState = (title, st) => {
@@ -430,6 +478,8 @@ app.registerExtension({
                         };
                         container.appendChild(add);
                     }
+                    // render 结束后按实际内容重算节点高度（nodes 2.0 下必须手动做，否则内容被裁）
+                    requestAnimationFrame(panelFit);
                 };
 
                 const tick = () => { applyAll(); render(); };

@@ -1650,12 +1650,29 @@ function nodeColorToCss(value) {
     timelineWrap.append(tlBar, tlStrip);
     const alignFrames = n => { n = Math.max(5, Math.round(n)); return n + (((5 - n) % 17) + 17) % 17; };
     const groupFrames = g => alignFrames((Number(g.duration) || 5) * 24);
+    const syncDurationWidget = () => {
+        const control = widget(node, "duration_seconds");
+        if (!control) return;
+        const total = brGroups.reduce((sum, group) => sum + (Number(group && group.duration) || 0), 0);
+        if (!Number.isFinite(total) || total <= 0) return;
+        const next = Math.round(Math.max(2, Math.min(30, total)) * 100) / 100;
+        if (Number(control.value) !== next) {
+            control.value = next;
+            try { control.callback?.(next); } catch {}
+            node.setDirtyCanvas?.(true, true);
+            persistState();
+        }
+    };
     const saveGroups = () => {
         // 全组提示词都为空时不落盘（写空串）：后端靠 segments_json 非空来判定多段，
         // 存一个空组只会让它抛「第 1 组提示词是空的」，而页面上字其实在 prompt 控件里。
         const hasText = brGroups.some(group => String((group && group.prompt) || "").trim());
         const value = brGroups.length >= 1 && hasText ? JSON.stringify(brGroups) : "";
         if (segmentsWidget && segmentsWidget.value !== value) segmentsWidget.value = value;
+        // 分组时长之和必须同步回隐藏的 duration_seconds：
+        // 单组且提示词为空时 segments_json 只能写成空串（后端不允许空提示词组），
+        // 这时视频长度只剩 duration_seconds 说了算——不同步就是「填 15 秒、跑出来 5 秒」。
+        syncDurationWidget();
         // widget 值在刷新恢复时可能丢，properties 必然随工作流序列化
         node.properties.br_segments_json = value;
     };

@@ -37,6 +37,8 @@ except ImportError:
 
 # Linux 侧兜底路径（Windows 下走 folder_paths，不会用到这里）
 FALLBACK_LORA_ROOT = "/mnt/AIModels/Aiwork/Comfyui-library/models/loras"
+# ★ 2026-11-22 双系统：Windows 侧同一个物理库的路径。哪边存在扫哪边。
+WINDOWS_LORA_ROOT = r"D:\Aiwork\Comfyui-library\models\loras"
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 PRESET_FILE = os.path.join(PLUGIN_DIR, "user_data", "lora_presets.json")
@@ -65,8 +67,13 @@ def get_lora_roots():
     except Exception as e:  # noqa: BLE001
         logger.warning(f"MultiLoraLoader: 读取 folder_paths 的 loras 目录失败: {e}")
 
-    if not roots and os.path.isdir(FALLBACK_LORA_ROOT):
-        roots.append(os.path.realpath(FALLBACK_LORA_ROOT))
+    # ★ 双系统自动适配：两套库目录都尝试，存在就加进扫描根（同一个物理目录，另一边 isdir 为 False 自然跳过）。
+    #   原来只有「folder_paths 给空」才兜底，而 ComfyUI 自带的空 models/loras 也算非空 → Ubuntu 侧永远读不到。
+    for extra in (WINDOWS_LORA_ROOT, FALLBACK_LORA_ROOT):
+        if extra and os.path.isdir(extra):
+            rp = os.path.realpath(extra)
+            if rp not in roots:
+                roots.append(rp)
 
     return roots
 
@@ -101,13 +108,29 @@ def _scan_all(force=False):
     return loras, roots
 
 
+def _norm_lora_name(value):
+    """名字归一：统一正斜杠、去扩展名、忽略大小写。
+
+    双系统必需——老工作流里存的是 Windows 风格 "Anima\\sex动作\\xxx"，
+    换到 Linux 后扫描出来是 "Anima/sex动作/xxx"，不归一就永远匹配不上。
+    """
+    text = str(value or "").strip().replace("\\", "/")
+    low = text.lower()
+    for ext in (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".sft"):
+        if low.endswith(ext):
+            text = text[: -len(ext)]
+            break
+    return text.lower()
+
+
 def _find_lora(name):
-    """按 name 找 LoRA 条目（name 是相对路径、无扩展名）"""
+    """按 name 找 LoRA 条目（相对路径、无扩展名，分隔符与大小写都做归一）"""
     if not name:
         return None
+    want = _norm_lora_name(name)
     loras, _ = _scan_all()
     for lora in loras:
-        if lora.get("name") == name:
+        if _norm_lora_name(lora.get("name")) == want:
             return lora
     return None
 
@@ -542,12 +565,12 @@ def _ensure_civitai_conf_file():
         pass
 
 
-def _get_civitai_token():
-    """优先环境变量，其次复用 Lora-Manager 的设置，最后读本节点自己的配置"""
+def _civitai_token_info():
+    """返回 (token, source)。source ∈ env / lora-manager / node-config / ''"""
     for key in ("CIVITAI_API_KEY", "CIVITAI_TOKEN"):
         val = (os.environ.get(key) or "").strip()
         if val:
-            return val
+            return val, "env"
     lm_settings = os.path.join(
         os.path.dirname(PLUGIN_DIR), "ComfyUI-Lora-Manager", "settings.json"
     )
@@ -555,8 +578,24 @@ def _get_civitai_token():
     if isinstance(data, dict):
         val = (data.get("civitai_api_key") or "").strip()
         if val:
-            return val
-    return (_civitai_conf().get("api_key") or "").strip()
+            return val, "lora-manager"
+    val = (_civitai_conf().get("api_key") or "").strip()
+    if val:
+        return val, "node-config"
+    return "", ""
+
+
+def _get_civitai_token():
+    """优先环境变量，其次复用 Lora-Manager 的设置，最后读本节点自己的配置"""
+    return _civitai_token_info()[0]
+
+
+def _mask_token(token):
+    if not token:
+        return ""
+    if len(token) <= 8:
+        return "*" * len(token)
+    return f"{token[:4]}...{token[-4:]}"
 
 
 def _sha256_of_file(path):
@@ -1428,6 +1467,61 @@ async def _post_process_download(task_id, dest_path, version):
         _SCAN_CACHE.clear()
 
 
+@PromptServer.instance.routes.get("/blackrin/multi_lora/civitai_config")
+async def get_civitai_config(request):
+    """Civitai 账号配置状态（API Key 是否存在、来源、掩码、代理）"""
+    token, source = _civitai_token_info()
+    conf = _civitai_conf()
+    return web.json_response({
+        "ok": True,
+        "has_key": bool(token),
+        "key_source": source,                 # env / lora-manager / node-config / ''
+        "key_hint": _mask_token(token),
+        "proxy": conf.get("proxy") or "",
+        "proxy_in_use": _detect_proxy(),
+        "conf_path": CIVITAI_CONF_FILE,
+    })
+
+
+@PromptServer.instance.routes.post("/blackrin/multi_lora/civitai_config")
+async def save_civitai_config(request):
+    """保存 API Key / 代理到 user_data/civitai.json（空串 = 清除）"""
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001
+        return web.json_response({"ok": False, "error": "JSON 解析失败"}, status=400)
+    if not isinstance(data, dict):
+        return web.json_response({"ok": False, "error": "参数格式错误"}, status=400)
+
+    conf = dict(_civitai_conf())
+    conf.setdefault("api_base", "")
+    conf.setdefault("dl_base", "")
+
+    if "api_key" in data:
+        key = str(data.get("api_key") or "").strip()
+        if key.lower().startswith("bearer "):
+            key = key[7:].strip()
+        conf["api_key"] = key
+    if "proxy" in data:
+        conf["proxy"] = str(data.get("proxy") or "").strip()
+
+    try:
+        os.makedirs(os.path.dirname(CIVITAI_CONF_FILE), exist_ok=True)
+        _write_json_file(CIVITAI_CONF_FILE, conf)
+    except OSError as e:
+        return web.json_response({"ok": False, "error": f"保存失败: {e}"}, status=500)
+
+    token, source = _civitai_token_info()
+    logger.info(f"MultiLoraLoader: Civitai 配置已保存（key {'有' if token else '无'}，来源 {source or '-'}）")
+    return web.json_response({
+        "ok": True,
+        "has_key": bool(token),
+        "key_source": source,
+        "key_hint": _mask_token(token),
+        "proxy": conf.get("proxy") or "",
+    })
+
+
 @PromptServer.instance.routes.post("/blackrin/multi_lora/civitai_download")
 async def civitai_download(request):
     """
@@ -1658,6 +1752,119 @@ async def save_trigger_conf(request):
         return web.json_response({"ok": False, "error": f"保存失败: {e}"}, status=500)
     _SCAN_CACHE.clear()
     return web.json_response({"ok": True, "count": len(conf)})
+
+
+_CIVITAI_MODEL_CACHE = {}
+
+
+@PromptServer.instance.routes.get("/blackrin/multi_lora/civitai_detail")
+async def civitai_detail(request):
+    """Civitai 模型详情（描述 / 示例图 / 全部版本），供详情弹窗 tabs 用。"""
+    model_id = (request.query.get("model_id") or "").strip()
+    if not model_id.isdigit():
+        return web.json_response({"ok": False, "error": "bad model_id"}, status=400)
+
+    now = time.time()
+    cached = _CIVITAI_MODEL_CACHE.get(model_id)
+    if cached and now - cached[0] < 600:
+        return web.json_response({"ok": True, "model": cached[1], "cached": True})
+
+    token = _get_civitai_token()
+    proxy = _detect_proxy()
+    headers = {"User-Agent": "ComfyUI-MultiLora/1.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    raw = None
+    last_err = ""
+    for base in _civitai_api_bases():
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(
+                    f"{base}/models/{model_id}",
+                    headers=headers,
+                    proxy=proxy or None,
+                    timeout=aiohttp.ClientTimeout(total=25),
+                ) as resp:
+                    if resp.status != 200:
+                        last_err = f"HTTP {resp.status} @ {base}"
+                        continue
+                    raw = await resp.json()
+                    break
+        except Exception as exc:  # noqa: BLE001
+            last_err = f"{type(exc).__name__}: {exc}"
+            continue
+
+    if not raw:
+        return web.json_response({"ok": False, "error": last_err or "fetch failed"}, status=502)
+
+    versions = []
+    for ver in (raw.get("modelVersions") or []):
+        images = []
+        for img in (ver.get("images") or [])[:24]:
+            url = img.get("url") or ""
+            if not url:
+                continue
+            images.append({
+                "url": "/blackrin/multi_lora/civitai_image?url=" + urllib.parse.quote(url, safe=""),
+                "width": img.get("width"),
+                "height": img.get("height"),
+                "nsfw": img.get("nsfwLevel") or img.get("nsfw") or 0,
+            })
+        size_kb = None
+        for file_item in (ver.get("files") or []):
+            if str(file_item.get("type", "")).lower() == "model":
+                size_kb = file_item.get("sizeKB")
+                break
+        versions.append({
+            "id": ver.get("id"),
+            "name": ver.get("name"),
+            "baseModel": ver.get("baseModel"),
+            "createdAt": ver.get("createdAt"),
+            "description": (ver.get("description") or "")[:6000],
+            "trainedWords": ver.get("trainedWords") or [],
+            "images": images,
+            "sizeKB": size_kb,
+            "downloadUrl": ver.get("downloadUrl"),
+        })
+
+    model = {
+        "id": raw.get("id"),
+        "name": raw.get("name"),
+        "type": raw.get("type"),
+        "description": raw.get("description") or "",
+        "creator": (raw.get("creator") or {}).get("username") or "",
+        "versions": versions,
+    }
+    _CIVITAI_MODEL_CACHE[model_id] = (now, model)
+    return web.json_response({"ok": True, "model": model})
+
+
+@PromptServer.instance.routes.get("/blackrin/multi_lora/civitai_image")
+async def civitai_image_proxy(request):
+    """代理 Civitai 图片（国内直连 image.civitai.com 不通，必须走代理）。"""
+    url = (request.query.get("url") or "").strip()
+    if not url:
+        return web.Response(status=400)
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host != "civitai.com" and not host.endswith(".civitai.com"):
+        return web.Response(status=403)
+    proxy = _detect_proxy()
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(url, proxy=proxy or None,
+                                timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                if resp.status != 200:
+                    return web.Response(status=resp.status)
+                body = await resp.read()
+                return web.Response(
+                    body=body,
+                    content_type=resp.content_type or "image/jpeg",
+                    headers={"Cache-Control": "private, max-age=86400"},
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("civitai 图片代理失败: %s", exc)
+        return web.Response(status=502)
 
 
 @PromptServer.instance.routes.get("/blackrin/multi_lora/civitai_versions")

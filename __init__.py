@@ -95,3 +95,13 @@ WEB_DIRECTORY = "./web"
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 
 print("🖤 BlackRin: Custom nodes loaded.")
+
+# 魔导书（角色 / 画师 / 服装 / 头发标签库）：import 即注册 /blackrin/grimoire/* 路由与懒加载数据
+from .grimoire import server as _grimoire_server  # noqa: E402,F401
+# 标签库节点（✨ 标签库）：只输出标签文本，不含任何模型编码
+from .grimoire.nodes import (  # noqa: E402
+    NODE_CLASS_MAPPINGS as _GRIMOIRE_NODE_MAPPINGS,
+    NODE_DISPLAY_NAME_MAPPINGS as _GRIMOIRE_NODE_NAMES,
+)
+NODE_CLASS_MAPPINGS.update(_GRIMOIRE_NODE_MAPPINGS)
+NODE_DISPLAY_NAME_MAPPINGS.update(_GRIMOIRE_NODE_NAMES)

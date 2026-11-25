@@ -205,7 +205,10 @@ def scan_loras(root) -> list:
             
             # 计算相对路径（使用正斜杠）
             rel_path = file_path.relative_to(root_path).as_posix()
-            name = str(file_path.relative_to(root_path).with_suffix(""))
+            # ★ 2026-11-22 双系统修复：name 也必须用正斜杠。
+            #   原来 str() 在 Windows 上得到 "Anima\sex动作\xxx"，Linux 上是 "Anima/sex动作/xxx"，
+            #   同一个 LoRA 在两套系统里名字不同 → 工作流切系统后匹配不到。
+            name = file_path.relative_to(root_path).with_suffix("").as_posix()
             
             # 获取文件大小
             try:

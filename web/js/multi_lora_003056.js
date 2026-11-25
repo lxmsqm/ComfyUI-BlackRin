@@ -405,6 +405,286 @@ function injectStyles() {
       transform: translateX(14px);
       background: #6fb4ff;
     }
+    /* 条目里的小号启用开关 */
+    .ml-name-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .ml-name-row .ml-name { min-width: 0; }
+    .ml-switch-sm {
+      width: 24px;
+      height: 13px;
+      flex-shrink: 0;
+    }
+    .ml-switch-sm::after {
+      width: 9px;
+      height: 9px;
+    }
+    .ml-switch-sm.on::after {
+      transform: translateX(11px);
+    }
+    /* 禁用的条目整行变淡，一眼能看出没启用 */
+    .ml-item.disabled { opacity: .45; }
+    .ml-item.disabled .ml-name { text-decoration: line-through; }
+    /* LoRA 详情弹窗（点预览图打开） */
+    .ml-detail-mask {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, .62);
+      backdrop-filter: blur(2px);
+    }
+    /* 弹窗挂在 document.body 下，拿不到节点容器里的 --ml-* 变量，所以这里颜色全部写死 */
+    .ml-detail-box {
+      width: min(560px, 92vw);
+      max-height: 84vh;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #3a3d44;
+      border-radius: 12px;
+      background: #1e2024;
+      color: #e6e8ea;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, .55);
+      overflow: hidden;
+    }
+    .ml-detail-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid #33363c;
+      background: #24262b;
+      color: #e6e8ea;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .ml-detail-head .ml-detail-title {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ml-detail-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .ml-detail-fig {
+      width: 100%;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #101317;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 120px;
+    }
+    .ml-detail-fig img,
+    .ml-detail-fig video {
+      max-width: 100%;
+      max-height: 42vh;
+      display: block;
+      object-fit: contain;
+    }
+    .ml-detail-grid {
+      display: grid;
+      grid-template-columns: 84px minmax(0, 1fr);
+      gap: 4px 10px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .ml-detail-grid dt { color: #8d949c; }
+    .ml-detail-grid dd { color: #e6e8ea; }
+    .ml-detail-grid dd { margin: 0; word-break: break-all; user-select: text; }
+    .ml-detail-block {
+      border: 1px solid #33363c;
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #24262b;
+      font-size: 12px;
+    }
+    .ml-detail-block h4 {
+      margin: 0 0 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #8d949c;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .ml-detail-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .ml-detail-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 4px 2px 8px;
+      border: 1px solid #3a4560;
+      border-radius: 10px;
+      background: rgba(74, 158, 255, .12);
+      color: #9ecbff;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .ml-detail-tag .ml-tag-del {
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: #8d949c;
+      font: 11px/14px Arial, sans-serif;
+      cursor: pointer;
+    }
+    .ml-detail-tag .ml-tag-del:hover { background: #e05545; color: #fff; }
+    .ml-tag-add {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .ml-tag-add input {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 24px;
+      padding: 0 7px;
+      border: 1px solid #3a3d44;
+      border-radius: 5px;
+      background: #1a1c20;
+      color: #e6e8ea;
+      font-size: 11px;
+      outline: none;
+    }
+    .ml-tag-add input:focus { border-color: #4a9eff; }
+    .ml-tag-add button {
+      flex: 0 0 auto;
+      height: 24px;
+      padding: 0 10px;
+      border: 1px solid #4a9eff;
+      border-radius: 5px;
+      background: rgba(74, 158, 255, .16);
+      color: #9ecbff;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .ml-detail-tag:hover { background: rgba(74, 158, 255, .22); }
+    .ml-detail-empty { color: #8d949c; font-size: 11px; }
+    /* 备注 */
+    .ml-detail-notes {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 54px;
+      max-height: 120px;
+      padding: 6px 8px;
+      border: 1px solid #3a3d44;
+      border-radius: 6px;
+      background: #1a1c20;
+      color: #e6e8ea;
+      font: 11px/1.5 Arial, "Microsoft YaHei", sans-serif;
+      resize: vertical;
+      outline: none;
+    }
+    .ml-detail-notes:focus { border-color: #4a9eff; }
+    /* tabs */
+    .ml-detail-tabs {
+      display: flex;
+      gap: 2px;
+      border-bottom: 1px solid #33363c;
+      padding: 0 2px;
+    }
+    .ml-detail-tab {
+      padding: 6px 12px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: #8d949c;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .ml-detail-tab:hover { color: #c9d3dd; }
+    .ml-detail-tab.active { color: #6fb4ff; border-bottom-color: #4a9eff; }
+    .ml-detail-tabpane { min-height: 90px; padding: 10px 2px; }
+    .ml-detail-imgs {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 6px;
+    }
+    .ml-detail-imgs img {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      border-radius: 6px;
+      cursor: zoom-in;
+      background: #101317;
+    }
+    .ml-detail-desc {
+      color: #cfd6dd;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 260px;
+      overflow: auto;
+      user-select: text;
+    }
+    .ml-detail-ver {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .ml-detail-ver-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border: 1px solid #33363c;
+      border-radius: 7px;
+      background: #24262b;
+      font-size: 11px;
+    }
+    .ml-detail-ver-item.cur { border-color: #4a9eff; }
+    .ml-detail-ver-main { flex: 1 1 auto; min-width: 0; }
+    .ml-detail-ver-name { color: #e6e8ea; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ml-detail-ver-sub { color: #8d949c; margin-top: 2px; }
+    .ml-detail-foot {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid #33363c;
+      background: #24262b;
+    }
+    .ml-detail-btn {
+      flex: 1 1 auto;
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid #3a3d44;
+      border-radius: 6px;
+      background: #2a2d33;
+      color: #e6e8ea;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .ml-detail-btn:hover { border-color: #4a9eff; color: #9ecbff; }
+    .ml-detail-btn.primary { border-color: #4a9eff; background: rgba(74, 158, 255, .16); color: #9ecbff; }
+
     /* 条目里的触发词按钮 */
     .ml-trig-btn {
       width: 18px;
@@ -527,6 +807,26 @@ function injectStyles() {
     .ml-mini-select { height: 32px; font-size: 12px; }
     .ml-dim { color: #7d8794; font-size: 11px; }
     .ml-dl-info { font-size: 12px; color: #d6dce6; line-height: 1.6; min-height: 18px; }
+    .ml-key-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: var(--ml-r-md);
+      background: var(--ml-bg-1);
+      border: 1px solid var(--ml-line);
+    }
+    .ml-key-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-size: 11px;
+      color: var(--ml-text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ml-key-text.ok { color: #9fdcae; }
+    .ml-key-text.warn { color: #e8c07a; }
     .ml-progress {
       height: 8px;
       border-radius: 999px;
@@ -2004,7 +2304,7 @@ class MultiLoRALoader {
       let listH = n === 0 ? 44 : 6;
       (this.state.selected || []).forEach(it => {
         listH += 66;
-        if (this.isTriggersOpen(it.name)) listH += 112;
+        if (this.isTriggersOpen(it.name)) listH += 112;   // 展开的触发词面板
       });
       const TOPBAR = 24, BTNROW = 50;
       let total = Math.max(140, listH + TOPBAR + BTNROW + 12);
@@ -2127,10 +2427,385 @@ class MultiLoRALoader {
     }
   }
 
+  // LoRA 详情弹窗（点预览图打开）：把触发词、路径、底模、大小都收进来
+  showLoraDetail(rawLora) {
+    try {
+      // 已加入列表的条目里存着用户改过的触发词/备注，优先用那份，否则从卡片点开只会看到原始数据
+      const pickedEntry = (this.state.selected || []).find(x => x.name === rawLora.name);
+      const lora = pickedEntry ? { ...rawLora, ...pickedEntry } : rawLora;
+      document.querySelector(".ml-detail-mask")?.remove();
+      const fileName = shortLoraName(lora.name);
+      const sizeMb = lora.size ? (lora.size / 1024 / 1024) : 0;
+      const realName = lora.filename || (lora.name || "").split(/[\\/]/).pop();
+
+      const mask = document.createElement("div");
+      mask.className = "ml-detail-mask";
+      mask.onclick = (ev) => { if (ev.target === mask) mask.remove(); };
+
+      const box = document.createElement("div");
+      box.className = "ml-detail-box";
+
+      // 头
+      const head = document.createElement("div");
+      head.className = "ml-detail-head";
+      const title = document.createElement("div");
+      title.className = "ml-detail-title";
+      title.textContent = fileName;
+      title.title = fileName;
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "ml-detail-btn";
+      closeBtn.style.cssText = "flex:0 0 auto;width:28px;height:24px;padding:0;border:0;background:transparent";
+      closeBtn.innerHTML = mlIcon("close");
+      closeBtn.onclick = () => mask.remove();
+      head.append(title, closeBtn);
+
+      // 主体
+      const body = document.createElement("div");
+      body.className = "ml-detail-body";
+
+      // 图
+      const fig = document.createElement("div");
+      fig.className = "ml-detail-fig";
+      if (lora.preview_url && lora.preview_type === "video") {
+        const video = document.createElement("video");
+        video.src = lora.preview_url;
+        video.controls = true; video.loop = true; video.muted = true;
+        fig.appendChild(video);
+      } else if (lora.preview_url) {
+        const img = document.createElement("img");
+        img.src = lora.preview_url;
+        img.onerror = () => { img.remove(); fig.innerHTML = `<span class="ml-detail-empty">${mlIcon("image")} 预览图加载失败</span>`; };
+        fig.appendChild(img);
+      } else {
+        fig.innerHTML = `<span class="ml-detail-empty">${mlIcon("image")} 没有预览图</span>`;
+      }
+      body.appendChild(fig);
+
+      // 信息表
+      const grid = document.createElement("dl");
+      grid.className = "ml-detail-grid";
+      const infoRows = [
+        ["文件名", realName || fileName],
+        ["相对路径", lora.name || "—"],
+        ["位置", lora.abs_path || "—"],
+        ["基础模型", lora.base_model || "—"],
+        ["大小", sizeMb ? sizeMb.toFixed(1) + " MB" : "—"],
+      ];
+      for (const [k, v] of infoRows) {
+        const dt = document.createElement("dt");
+        dt.textContent = k;
+        const dd = document.createElement("dd");
+        dd.textContent = v;
+        grid.append(dt, dd);
+      }
+      body.appendChild(grid);
+
+      // 触发词（合并进来：点单个复制 / 全部复制）
+      const trigBlock = document.createElement("div");
+      trigBlock.className = "ml-detail-block";
+      const trigWords = Array.isArray(lora.triggers) ? [...lora.triggers.filter(Boolean)] : [];
+      const persistTriggers = () => {
+        // 只改当前选中项（写进 lora_stack），不动 safetensors / Lora Manager 的库
+        const picked = this.state.selected.find(x => x.name === lora.name);
+        if (picked) {
+          picked.triggers = [...trigWords];
+          this.saveToNode();
+          if (this.container) this.renderList();
+        }
+        lora.triggers = [...trigWords];
+      };
+      const repaintTags = () => {
+        const wrapEl = trigBlock.querySelector(".ml-detail-tags");
+        if (!wrapEl) return;
+        wrapEl.innerHTML = "";
+        trigWords.forEach((word, idx) => {
+          const tag = document.createElement("span");
+          tag.className = "ml-detail-tag";
+          tag.title = "点击复制这一条";
+          const label = document.createElement("span");
+          label.textContent = word;
+          label.onclick = (ev) => {
+            ev.stopPropagation();
+            navigator.clipboard?.writeText(word);
+            this.toast("已复制：" + word, "ok");
+          };
+          const delTag = document.createElement("button");
+          delTag.className = "ml-tag-del";
+          delTag.textContent = "×";
+          delTag.title = "从当前 LoRA 的触发词里删掉这条（只影响本工作流，不改原文件）";
+          delTag.onclick = (ev) => {
+            ev.stopPropagation();
+            trigWords.splice(idx, 1);
+            persistTriggers();
+            repaintTags();
+            this.toast("已删除触发词", "ok");
+          };
+          tag.append(label, delTag);
+          wrapEl.appendChild(tag);
+        });
+        if (!trigWords.length) {
+          wrapEl.insertAdjacentHTML("afterbegin", '<span class="ml-detail-empty">暂无触发词，可在下面添加</span>');
+        }
+        // 标题里的数量跟着变
+        const cnt = trigBlock.querySelector(".ml-trig-count");
+        if (cnt) cnt.textContent = String(trigWords.length);
+      };
+      const trigHead = document.createElement("h4");
+      trigHead.innerHTML = mlIcon("tag", "sm") + `<span>触发词（<span class="ml-trig-count">${trigWords.length}</span>）</span>`;
+      if (trigWords.length) {
+        const copyAll = document.createElement("button");
+        copyAll.className = "ml-detail-btn";
+        copyAll.style.cssText = "flex:0 0 auto;margin-left:auto;width:auto;height:20px;padding:0 8px;font-size:10px";
+        copyAll.innerHTML = mlIcon("copy", "sm") + "<span>全部复制</span>";
+        copyAll.onclick = () => {
+          navigator.clipboard?.writeText(trigWords.join(", "));
+          this.toast(`已复制 ${trigWords.length} 条触发词`, "ok");
+        };
+        trigHead.appendChild(copyAll);
+      }
+      trigBlock.appendChild(trigHead);
+      const tagWrap = document.createElement("div");
+      tagWrap.className = "ml-detail-tags";
+      trigBlock.appendChild(tagWrap);
+
+      // 添加触发词
+      const addRow = document.createElement("div");
+      addRow.className = "ml-tag-add";
+      const addInput = document.createElement("input");
+      addInput.placeholder = "输入触发词，回车添加…";
+      const doAdd = () => {
+        const word = addInput.value.trim();
+        if (!word) return;
+        if (trigWords.includes(word)) { this.toast("已经有了"); return; }
+        trigWords.push(word);
+        addInput.value = "";
+        persistTriggers();
+        repaintTags();
+      };
+      addInput.onkeydown = (ev) => {
+        ev.stopPropagation();
+        if (ev.key === "Enter") { ev.preventDefault(); doAdd(); }
+      };
+      addInput.onmousedown = (ev) => ev.stopPropagation();
+      const tagAddBtn = document.createElement("button");
+      tagAddBtn.textContent = "添加";
+      tagAddBtn.onclick = doAdd;
+      addRow.append(addInput, tagAddBtn);
+      trigBlock.appendChild(addRow);
+
+      body.appendChild(trigBlock);
+      repaintTags();
+
+      // Civitai
+      const modelId = lora.civitai_model_id || lora.civitai?.modelId || lora.civitai?.id;
+      if (modelId) {
+        const cBlock = document.createElement("div");
+        cBlock.className = "ml-detail-block";
+        cBlock.innerHTML = mlIcon("external", "sm") +
+          ` <a href="https://civitai.com/models/${modelId}" target="_blank" rel="noreferrer" style="color:#9ecbff;text-decoration:none">在 Civitai 查看（model ${modelId}）</a>`;
+        body.appendChild(cBlock);
+      }
+
+      // 备注（存进 lora_stack 的 notes 字段，随时改）
+      const notesBlock = document.createElement("div");
+      notesBlock.className = "ml-detail-block";
+      notesBlock.innerHTML = mlIcon("pencil", "sm") + " <span>附加备注</span>";
+      const notesArea = document.createElement("textarea");
+      notesArea.className = "ml-detail-notes";
+      notesArea.placeholder = "给这个 LoRA 记点东西…";
+      notesArea.value = lora.notes || "";
+      notesArea.onblur = () => {
+        const picked = this.state.selected.find(x => x.name === lora.name);
+        if (picked) { picked.notes = notesArea.value; this.saveToNode(); }
+        lora.notes = notesArea.value;
+      };
+      notesArea.onkeydown = (ev) => ev.stopPropagation();
+      notesArea.onmousedown = (ev) => ev.stopPropagation();
+      notesBlock.appendChild(notesArea);
+      body.appendChild(notesBlock);
+
+      // tabs：示例 / 模型描述 / 版本
+      const tabsBar = document.createElement("div");
+      tabsBar.className = "ml-detail-tabs";
+      const tabPane = document.createElement("div");
+      tabPane.className = "ml-detail-tabpane";
+      tabPane.innerHTML = '<div class="ml-detail-empty">正在从 Civitai 读取…</div>';
+      body.append(tabsBar, tabPane);
+
+      const tabDefs = [
+        { key: "images", label: "示例" },
+        { key: "desc", label: "模型描述" },
+        { key: "vers", label: "版本" },
+      ];
+      const tabState = { active: "images", model: null, error: "" };
+
+      const renderPane = () => {
+        tabPane.innerHTML = "";
+        if (tabState.error) {
+          tabPane.innerHTML = `<div class="ml-detail-empty">${tabState.error}</div>`;
+          return;
+        }
+        if (!tabState.model) {
+          tabPane.innerHTML = '<div class="ml-detail-empty">正在从 Civitai 读取…</div>';
+          return;
+        }
+        const versions = tabState.model.versions || [];
+        // 优先挑与当前文件同版本的（按 civitai_version_id 匹配），否则取第一个
+        const curVer = versions.find(v => String(v.id) === String(lora.civitai_version_id)) || versions[0] || {};
+
+        if (tabState.active === "images") {
+          const imgs = curVer.images || [];
+          if (!imgs.length) {
+            tabPane.innerHTML = '<div class="ml-detail-empty">这个版本没有示例图</div>';
+          } else {
+            const grid = document.createElement("div");
+            grid.className = "ml-detail-imgs";
+            imgs.forEach(img => {
+              const el = document.createElement("img");
+              el.src = img.url;
+              el.loading = "lazy";
+              el.title = "点击看原图";
+              el.onclick = () => window.open(img.url, "_blank");
+              el.onerror = () => el.remove();
+              grid.appendChild(el);
+            });
+            tabPane.appendChild(grid);
+          }
+        } else if (tabState.active === "desc") {
+          const div = document.createElement("div");
+          div.className = "ml-detail-desc";
+          // Civitai 描述是 HTML，转纯文本渲染（避免注入 + 影响面板布局）
+          const tmp = document.createElement("div");
+          tmp.innerHTML = tabState.model.description || "";
+          div.textContent = (tmp.textContent || "").replace(/\n{3,}/g, "\n\n").trim() || "这个模型没有描述";
+          tabPane.appendChild(div);
+        } else {
+          if (!versions.length) {
+            tabPane.innerHTML = '<div class="ml-detail-empty">没有版本信息</div>';
+            return;
+          }
+          const list = document.createElement("div");
+          list.className = "ml-detail-ver";
+          versions.forEach(v => {
+            const row = document.createElement("div");
+            row.className = "ml-detail-ver-item" + (String(v.id) === String(curVer.id) ? " cur" : "");
+            const main = document.createElement("div");
+            main.className = "ml-detail-ver-main";
+            const nm = document.createElement("div");
+            nm.className = "ml-detail-ver-name";
+            nm.textContent = v.name || ("版本 " + v.id);
+            const sub = document.createElement("div");
+            sub.className = "ml-detail-ver-sub";
+            const parts = [];
+            if (v.baseModel) parts.push(v.baseModel);
+            if (v.sizeKB) parts.push((v.sizeKB / 1024).toFixed(1) + " MB");
+            if (v.createdAt) parts.push(String(v.createdAt).slice(0, 10));
+            sub.textContent = parts.join(" · ") || "—";
+            main.append(nm, sub);
+            row.appendChild(main);
+            if (String(v.id) === String(curVer.id)) {
+              const badge = document.createElement("span");
+              badge.className = "ml-detail-tag";
+              badge.style.cursor = "default";
+              badge.textContent = "当前";
+              row.appendChild(badge);
+            }
+            const dl = document.createElement("a");
+            dl.href = `https://civitai.com/models/${tabState.model.id}?modelVersionId=${v.id}`;
+            dl.target = "_blank";
+            dl.rel = "noreferrer";
+            dl.className = "ml-detail-btn";
+            dl.style.cssText = "flex:0 0 auto;width:auto;height:24px;padding:0 9px;font-size:11px;text-decoration:none";
+            dl.innerHTML = mlIcon("external", "sm") + "<span>打开</span>";
+            row.appendChild(dl);
+            list.appendChild(row);
+          });
+          tabPane.appendChild(list);
+        }
+      };
+
+      const paintTabs = () => {
+        tabsBar.innerHTML = "";
+        tabDefs.forEach(def => {
+          const btn = document.createElement("button");
+          btn.className = "ml-detail-tab" + (tabState.active === def.key ? " active" : "");
+          btn.textContent = def.label;
+          btn.onclick = () => { tabState.active = def.key; paintTabs(); renderPane(); };
+          tabsBar.appendChild(btn);
+        });
+      };
+      paintTabs();
+
+      if (modelId) {
+        fetch(`${API_BASE}/civitai_detail?model_id=${encodeURIComponent(modelId)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data?.ok && data.model) {
+              tabState.model = data.model;
+            } else {
+              tabState.error = "Civitai 读取失败：" + (data?.error || "未知错误");
+            }
+            renderPane();
+          })
+          .catch(err => {
+            tabState.error = "Civitai 读取失败：" + (err && err.message || err);
+            renderPane();
+          });
+      } else {
+        tabState.error = "这个 LoRA 没有 Civitai 编号，无法读取描述/示例/版本";
+        renderPane();
+      }
+
+      // 底栏：复制名字 / 加入列表
+      const foot = document.createElement("div");
+      foot.className = "ml-detail-foot";
+      const copyNameBtn = document.createElement("button");
+      copyNameBtn.className = "ml-detail-btn";
+      copyNameBtn.innerHTML = mlIcon("copy", "sm") + "<span>复制 LoRA 名</span>";
+      copyNameBtn.onclick = () => {
+        navigator.clipboard?.writeText(lora.name || "");
+        this.toast("已复制 LoRA 名", "ok");
+      };
+      const addBtn = document.createElement("button");
+      addBtn.className = "ml-detail-btn primary";
+      addBtn.innerHTML = mlIcon("plus", "sm") + "<span>加入列表</span>";
+      addBtn.onclick = () => {
+        if (!this.state.selected.find(x => x.name === lora.name)) {
+          // 注意：不要重读 lora.triggers / lora.notes 的旧值——
+          // persistTriggers / notes 已经把它们合并进 pickedEntry 或写回 lora，
+          // 这里必须沿用当前 lora 对象，否则从卡片打开再编辑后点加入会把编辑冲掉。
+          this.state.selected.push({
+            name: lora.name,
+            weight: 1.0,
+            weight_clip: null,
+            preview_url: lora.preview_url || "",
+            preview_type: lora.preview_type || "",
+            triggers: [...trigWords],
+            notes: notesArea.value,
+            enabled: true,
+          });
+          this.saveToNode();
+          this.renderList();
+          this.toast("已加入列表", "ok");
+        } else {
+          this.toast("已经在列表里了");
+        }
+        mask.remove();
+      };
+      foot.append(copyNameBtn, addBtn);
+
+      box.append(head, body, foot);
+      mask.appendChild(box);
+      document.body.appendChild(mask);
+    } catch (err) {
+      console.error("[MultiLoRA] 详情弹窗失败", err);
+    }
+  }
+
   // 创建单个列表项
   createListItem(item, index) {
     const row = document.createElement("div");
-    row.className = "ml-item";
+    row.className = "ml-item" + (item.enabled === false ? " disabled" : "");
 
     // 缩略图（同时是拖拽手柄）
     const thumb = document.createElement("div");
@@ -2167,15 +2842,51 @@ class MultiLoRALoader {
     }
     row.appendChild(thumb);
 
+    // 详情走右键菜单；这里恢复"触发词"下拉按钮（点开可看/开关触发词）
+    const trigWords = Array.isArray(item.triggers) ? item.triggers.filter(Boolean) : [];
+    const trigBtn = document.createElement("button");
+    trigBtn.className = "ml-trig-btn" + (trigWords.length ? "" : " empty") + (this.isTriggersOpen(item.name) ? " open" : "");
+    trigBtn.innerHTML = mlIcon("chevron", "sm");
+    trigBtn.title = trigWords.length
+      ? `触发词 ${trigWords.length} 条（点开查看/开关）`
+      : "这个 LoRA 没有触发词（点开可添加）";
+    trigBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.toggleTriggers(item.name);
+    };
+    row.appendChild(trigBtn);
+
     // 信息区
     const info = document.createElement("div");
     info.className = "ml-info";
+
+    // 名字行：左边加一个启用开关（禁用后不参与生成，但保留在列表里）
+    const nameRow = document.createElement("div");
+    nameRow.className = "ml-name-row";
+
+    const enableSw = document.createElement("div");
+    enableSw.className = "ml-switch ml-switch-sm" + (item.enabled === false ? "" : " on");
+    enableSw.title = item.enabled === false
+        ? "已禁用：不参与生成，点一下启用"
+        : "已启用，点一下禁用（保留在列表里）";
+    enableSw.onclick = (event) => {
+        event.stopPropagation();
+        item.enabled = item.enabled === false ? true : false;
+        enableSw.classList.toggle("on", item.enabled !== false);
+        enableSw.title = item.enabled === false
+            ? "已禁用：不参与生成，点一下启用"
+            : "已启用，点一下禁用（保留在列表里）";
+        row.classList.toggle("disabled", item.enabled === false);
+        this.saveToNode();
+    };
+    nameRow.appendChild(enableSw);
 
     const nameEl = document.createElement("div");
     nameEl.className = "ml-name";
     nameEl.textContent = item.name;
     nameEl.title = item.name;
-    info.appendChild(nameEl);
+    nameRow.appendChild(nameEl);
+    info.appendChild(nameRow);
 
     const weightRow = document.createElement("div");
     weightRow.className = "ml-weight-row";
@@ -2314,23 +3025,6 @@ class MultiLoRALoader {
       this.toast(`已调整顺序：${shortLoraName(moved.name)} → 第 ${to + 1} 位`, "ok");
     };
 
-    // 触发词下拉按钮
-    const trigCount = (item.triggers || []).length;
-    const trigBtn = document.createElement("button");
-    trigBtn.className = "ml-trig-btn"
-      + (trigCount ? "" : " empty")
-      + (this.isTriggersOpen(item.name) ? " open" : "");
-    trigBtn.innerHTML = mlIcon("chevron", "sm");
-    trigBtn.title = trigCount
-      ? `触发词 ${trigCount} 条（点开查看/开关）`
-      : "这个 LoRA 没有触发词";
-    trigBtn.onclick = (e) => {
-      e.stopPropagation();
-      if (!trigCount) { this.toast("这个 LoRA 的 metadata 里没有触发词", "err"); return; }
-      this.toggleTriggers(item.name);
-    };
-    row.appendChild(trigBtn);
-
     // 删除按钮
     const delBtn = document.createElement("button");
     delBtn.className = "ml-delete";
@@ -2466,9 +3160,9 @@ class MultiLoRALoader {
   }
 
   // 加载 LoRA 列表
-  async loadLoras() {
+  async loadLoras(force = false) {
     try {
-      const res = await fetch(`${API_BASE}/loras`);
+      const res = await fetch(`${API_BASE}/loras` + (force ? "?refresh=1" : ""));
       const data = await res.json();
       this.state.allLoras = data.loras || [];
     } catch (e) {
@@ -2974,6 +3668,44 @@ class MultiLoRALoader {
     row1.appendChild(parseBtn);
     box.appendChild(row1);
 
+    // Civitai 账号状态（下载需要 API Key）
+    const keyRow = document.createElement("div");
+    keyRow.className = "ml-key-row";
+    const keyText = document.createElement("span");
+    keyText.className = "ml-key-text";
+    keyText.textContent = "读取 API Key 状态…";
+    const keyBtn = document.createElement("button");
+    keyBtn.className = "ml-trig-mini";
+    keyBtn.textContent = "设置";
+    keyBtn.title = "填写 Civitai API Key / 代理";
+    keyRow.appendChild(keyText);
+    keyRow.appendChild(keyBtn);
+    box.appendChild(keyRow);
+
+    const refreshKey = async () => {
+      try {
+        const d = await (await fetch(`${API_BASE}/civitai_config`)).json();
+        if (!d.ok) { keyText.textContent = "读取配置失败"; return null; }
+        const srcName = { env: "环境变量", "lora-manager": "复用 LoraManager 的 Key", "node-config": "本节点配置" }[d.key_source] || "";
+        if (d.has_key) {
+          keyText.className = "ml-key-text ok";
+          keyText.textContent = `API Key 已配置（${srcName}：${d.key_hint}）`;
+        } else {
+          keyText.className = "ml-key-text warn";
+          keyText.textContent = "未配置 API Key：公开模型能下，早期访问/受限资源会 403";
+        }
+        keyText.title = d.proxy_in_use ? `代理：${d.proxy_in_use}` : "未检测到代理（C 站图片需代理）";
+        return d;
+      } catch (e) {
+        keyText.textContent = "读取配置失败：" + e;
+        return null;
+      }
+    };
+    keyBtn.onclick = () => {
+      this.showCivitaiConfigDialog(refreshKey);
+    };
+    refreshKey();
+
     const info = document.createElement("div");
     info.className = "ml-dl-info";
     box.appendChild(info);
@@ -3098,6 +3830,118 @@ class MultiLoRALoader {
       startBtn.disabled = false;
       parseBtn.disabled = false;
     };
+  }
+
+  // ---- Civitai API Key / 代理 设置 ----
+  async showCivitaiConfigDialog(onSaved) {
+    let cur = { api_key: "", proxy: "", has_key: false, key_hint: "", key_source: "" };
+    try {
+      const d = await (await fetch(`${API_BASE}/civitai_config`)).json();
+      if (d && d.ok) cur = d;
+    } catch (e) { /* 读不到就给空表单 */ }
+
+    this.closeMiniDialog();
+    const mask = document.createElement("div");
+    mask.className = "ml-mini-mask";
+    const box = document.createElement("div");
+    box.className = "ml-mini ml-mini-wide";
+
+    const title = document.createElement("div");
+    title.className = "ml-mini-title";
+    title.textContent = "Civitai 账号设置";
+    box.appendChild(title);
+
+    const hint = document.createElement("div");
+    hint.className = "ml-mini-hint";
+    hint.innerHTML = "下载 / 拉取受限资源需要 API Key（Civitai → 账号设置 → API Keys 生成）。" +
+      (cur.has_key ? `<br>当前：已配置（${cur.key_hint}）` : "<br>当前：<b>未配置</b>") +
+      "<br>留空保存 = 保持不变；要清除请点「清除 Key」。环境变量 / LoraManager 的 Key 优先级更高。";
+    box.appendChild(hint);
+
+    const keyInput = document.createElement("input");
+    keyInput.className = "ml-mini-input";
+    keyInput.placeholder = cur.has_key ? "留空则保持/清除，需要更换就粘贴新 Key" : "粘贴 Civitai API Key";
+    box.appendChild(keyInput);
+
+    const proxyInput = document.createElement("input");
+    proxyInput.className = "ml-mini-input";
+    proxyInput.value = cur.proxy || "";
+    proxyInput.placeholder = "代理（可选，如 http://127.0.0.1:7897）";
+    box.appendChild(proxyInput);
+
+    const row = document.createElement("div");
+    row.className = "ml-mini-row";
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "ml-footer-btn ml-btn-ghost";
+    clearBtn.textContent = "清除 Key";
+    clearBtn.style.display = cur.has_key ? "" : "none";
+    const spacer = document.createElement("div");
+    spacer.style.flex = "1 1 auto";
+    const cancel = document.createElement("button");
+    cancel.className = "ml-footer-btn ml-btn-cancel";
+    cancel.textContent = "取消";
+    const ok = document.createElement("button");
+    ok.className = "ml-footer-btn ml-btn-apply";
+    ok.textContent = "保存";
+    row.appendChild(clearBtn);
+    row.appendChild(spacer);
+    row.appendChild(cancel);
+    row.appendChild(ok);
+    box.appendChild(row);
+
+    mask.appendChild(box);
+    (this.panelEl || document.body).appendChild(mask);
+    this._miniMask = mask;
+    const close = () => mask.remove();
+    cancel.onclick = close;
+    mask.onclick = (e) => { if (e.target === mask) close(); };
+    keyInput.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") { e.preventDefault(); ok.click(); }
+      else if (e.key === "Escape") { e.preventDefault(); close(); }
+    };
+
+    clearBtn.onclick = async () => {
+      clearBtn.disabled = true;
+      try {
+        const r = await fetch(`${API_BASE}/civitai_config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: "" })
+        });
+        const d = await r.json();
+        if (!d.ok) { clearBtn.disabled = false; this.toast(d.error || "清除失败", "err"); return; }
+        this.toast("已清除本节点的 API Key", "ok");
+        close();
+        if (onSaved) onSaved(d);
+      } catch (e) {
+        clearBtn.disabled = false;
+        this.toast("清除失败：" + e, "err");
+      }
+    };
+
+    ok.onclick = async () => {
+      ok.disabled = true;
+      try {
+        const payload = { proxy: proxyInput.value.trim() };
+        // 只有真的输入了才改 key，避免"空着保存"把已有 Key 清掉
+        if (keyInput.value.trim()) payload.api_key = keyInput.value.trim();
+        const r = await fetch(`${API_BASE}/civitai_config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!d.ok) { ok.disabled = false; this.toast(d.error || "保存失败", "err"); return; }
+        this.toast(d.has_key ? `已保存（${d.key_hint}）` : "已保存（未配置 Key）", "ok");
+        close();
+        if (onSaved) onSaved(d);
+      } catch (e) {
+        ok.disabled = false;
+        this.toast("保存失败：" + e, "err");
+      }
+    };
+    setTimeout(() => keyInput.focus(), 30);
   }
 
   async watchDownload(taskId, onTick) {
@@ -3628,7 +4472,7 @@ class MultiLoRALoader {
       this.openCivitaiPage(lora.civitai_model_id, lora.civitai_version_id, lora.name);
     });
 
-    addItem("tag", "编辑触发词…", () => this.openLoraTriggers(lora));
+    addItem("tag", "查看详情…", () => this.showLoraDetail(lora));
     addItem("layers", "版本列表…", () => this.openLoraVersions(lora));
 
     const sep2 = document.createElement("div");
@@ -4250,13 +5094,29 @@ class MultiLoRALoader {
       upBtn.onclick = () => this.openUpdatesDialog(main);
       toolbar.appendChild(upBtn);
 
-      // 触发词管理
-      const tagBtn = document.createElement("button");
-      tagBtn.className = "ml-toolbar-btn";
-      tagBtn.innerHTML = mlIcon("tag") + "<span>触发词</span>";
-      tagBtn.title = "统一管理所有 LoRA 的触发词";
-      tagBtn.onclick = () => this.openTriggerManager(main);
-      toolbar.appendChild(tagBtn);
+      // 刷新：重新扫描本地 LoRA 目录，把新放进去的 LoRA 拉进列表
+      const refreshBtn = document.createElement("button");
+      refreshBtn.className = "ml-toolbar-btn";
+      refreshBtn.innerHTML = mlIcon("refresh") + "<span>刷新</span>";
+      refreshBtn.title = "重新扫描本地 LoRA 目录（会清掉后端缓存，新放进去的 LoRA 立刻出现）";
+      refreshBtn.onclick = async () => {
+        if (refreshBtn.disabled) return;
+        refreshBtn.disabled = true;
+        const oldHtml = refreshBtn.innerHTML;
+        refreshBtn.innerHTML = mlIcon("refresh") + "<span>扫描中…</span>";
+        try {
+          await this.loadLoras(true);
+          this.renderGrid(main);
+          this.toast(`已刷新，共 ${this.state.allLoras.length} 个 LoRA`, "ok");
+        } catch (err) {
+          console.error("[MultiLoRA] 刷新失败", err);
+          this.toast("刷新失败", "err");
+        } finally {
+          refreshBtn.disabled = false;
+          refreshBtn.innerHTML = oldHtml;
+        }
+      };
+      toolbar.appendChild(refreshBtn);
 
       main.appendChild(toolbar);
 
@@ -4477,6 +5337,7 @@ class MultiLoRALoader {
           };
           thumb.appendChild(uploader);
         }
+        // 详情改成右键菜单里打开（单击保持原来的"选中"行为）
         card.appendChild(thumb);
 
         // 信息

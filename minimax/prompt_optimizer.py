@@ -475,7 +475,8 @@ def _output_language_mandate(has_rule: bool = False) -> str:
             "[Shot N] 标记、MM:SS.mmm 时间戳、"
             "fully_preserved / partially_preserved / attribute_transfer / weak_reference / removed / added / "
             "fully_copy / partially_copy / reference 等固定关系标记、以及文件名。"
-            "除规则明确要求外，不得输出任何解释、前言、后记或自检报告。"
+            "除规则明确要求外，不得输出任何解释、前言、后记或自检报告；"
+            "这是无人值守的自动化管线，不要反问、不要要求澄清、不要复述需求。"
         )
     return (
         "\n\n【输出语言硬性要求（最高优先级，覆盖其他一切指令）】\n"
@@ -485,7 +486,9 @@ def _output_language_mandate(has_rule: bool = False) -> str:
         "detailed_description、integrated_multimodal_description、overall_soundscape、non_diegetic_music）、"
         "媒体与主体标签（<Picture 1>、<Video 1>、<Subject 1>、<Audio 1>）、[Shot N] 标记、MM:SS.mmm 时间戳、"
         "fully_preserved / partially_preserved / attribute_transfer / weak_reference / removed / added / "
-        "fully_copy / partially_copy / reference 等固定关系标记、以及文件名。"
+        "fully_copy / partially_copy / reference 等固定关系标记、以及文件名。\n"
+        "这是无人值守的自动化管线：不要反问、不要要求澄清、不要复述我的需求、不要解释你在做什么，"
+        "直接从第一个字段名开始输出最终成品。"
     )
 
 
@@ -664,12 +667,28 @@ def _ensure_fl2va_picture_labels(text: str, task: str, duration: float) -> str:
 
 
 def _strip_think(text: str) -> str:
-    """剥掉推理模型混进正文的思考块（llama.cpp 系模型常见）。"""
-    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    """剥掉推理模型混进正文的思考内容。
+
+    各家标记不一样：<think>、[think]、<|thinking|>、以及中文的「思考过程：」段。
+    只剥标记与开头的前言段，不碰正文结构。
+    """
+    cleaned = re.sub(r"<think[^>]*>[\s\S]*?</think[^>]*>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<\|?think(?:ing)?\|?>[\s\S]*?<\|?/think(?:ing)?\|?>", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\[/?think\]", "", cleaned, flags=re.IGNORECASE)
     # 未闭合的 <think>（输出被截断时）：丢掉思考开始之后的全部内容
-    open_idx = cleaned.lower().find("<think>")
+    open_idx = cleaned.lower().find("<think")
     if open_idx >= 0:
         cleaned = cleaned[:open_idx]
+    # 开头整段「思考过程：…」（到第一个空行为止）
+    cleaned = re.sub(
+        r"^\s*(?:思考过程|思考|推理过程|Thinking Process|Reasoning)\s*[:：][\s\S]*?\n\s*\n",
+        "", cleaned, flags=re.IGNORECASE,
+    )
+    # 开头的客套前言（好的/以下是…这类，短于 40 字且自成一行）
+    cleaned = re.sub(
+        r"^\s*(?:好的|好[，,]|以下是|下面是|根据(?:你的|您)?(?:要求|需求))[^\n]{0,40}[:：]?\s*\n+",
+        "", cleaned,
+    )
     return cleaned.strip()
 
 

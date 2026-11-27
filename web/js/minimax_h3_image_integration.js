@@ -2510,7 +2510,9 @@ function nodeColorToCss(value) {
             if (current.api_key && !providerApiKeys[current.provider || "assistant"]) providerApiKeys[current.provider || "assistant"] = current.api_key;
             const providerModels = { ...(current.provider_models || {}) };
             if (current.model && !providerModels[current.provider || "assistant"]) providerModels[current.provider || "assistant"] = current.model;
-            const key = row("API key", make("input")); key.type = "password"; key.value = providerApiKeys[provider.value] || "";
+            // API Key 输入框已移除：手填的 key 会随工作流序列化，分享工作流等于把 key 送出去。
+            // 需要 key 的服务统一在「提示词小助手」的服务列表里配（全局、不进工作流）。
+            const key = { value: providerApiKeys[provider.value] || "" };
             const readMedia = make("input"); readMedia.type = "checkbox"; readMedia.checked = current.read_media !== false; readMedia.className = "ghh3-opt-check";
             const url = row("API URL", make("input"), true);
             const customModelGroup = make("div"); customModelGroup.className = "ghh3-opt-model-row";
@@ -2595,7 +2597,7 @@ function nodeColorToCss(value) {
                 const fetched = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/custom-models`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ api_url: url.value.trim(), api_key: key.value.trim(), protocol: protocol.value }),
+                    body: JSON.stringify({ api_url: url.value.trim(), protocol: protocol.value }),
                     cache: "no-store",
                 });
                 if (fetched.error) throw new Error(fetched.error);
@@ -2609,7 +2611,6 @@ function nodeColorToCss(value) {
                 const custom = provider.value === "custom";
                 const assistant = provider.value === "assistant";
                 dialog.classList.toggle("custom", custom);
-                key.closest("label")?.classList.toggle("ghh3-opt-hidden", assistant);
                 assistantService.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
                 assistantModel.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
                 model.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);

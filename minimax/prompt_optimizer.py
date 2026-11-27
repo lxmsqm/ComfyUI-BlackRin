@@ -1086,8 +1086,10 @@ async def save_prompt_optimizer_config(request):
 def _prepare_prompt_optimization(payload: dict) -> tuple[dict, threading.Event]:
     node_config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     config = _normalize_config(node_config)
+    # 不再强制要求 api_key：本地 / 局域网服务（llama-swap、Ollama、LM Studio）通常不需要 key。
+    # 需要 key 的云端服务走「提示词小助手」的服务列表（key 存在全局配置里，不进工作流）。
     if config.get("provider") != "assistant" and (
-        not config.get("api_url") or not config.get("model") or not config.get("api_key")
+        not config.get("api_url") or not config.get("model")
     ):
         raise ValueError("请先配置提示词优化 API")
     cancel_event = threading.Event()

@@ -2338,20 +2338,50 @@ function nodeColorToCss(value) {
         const b = document.activeElement === prompt ? prompt.selectionEnd : a;
         prompt.setRangeText(`<Audio ${ordinal}>`, a, b, "end"); renderPromptHighlights(); promptByMode[state.mode] = prompt.value; setPromptWidget(node, prompt.value); persistState();
     }
+    // 下拉里只保留两项：小助手（用本机配置的服务列表）和自己填的服务商。
+    // 原先把 OpenAI/Gemini/RunningHub… 这些硬编码厂商也塞进来，和「服务列表」概念重叠，
+    // 且实际都用不上——统一收成「提示词小助手 + 自定义」。
     const optimizerProviders = {
         assistant: { label: "提示词小助手", url: "", model: "", protocol: "openai" },
-        runninghub: { label: "RunningHub 国内版（推荐）", url: "https://www.runninghub.cn/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "runninghub" },
-        runninghub_overseas: { label: "RunningHub 海外版", url: "https://www.runninghub.ai/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "runninghub" },
-        openai: { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4.1-mini", protocol: "openai" },
-        gemini: { label: "Google Gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash", protocol: "gemini" },
-        openrouter: { label: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "google/gemini-2.5-flash", protocol: "openai" },
-        dashscope: { label: "阿里云百炼", url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-vl-max", protocol: "openai" },
-        siliconflow: { label: "SiliconFlow", url: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-VL-72B-Instruct", protocol: "openai" },
-        custom: { label: t("Custom"), url: "", model: "", protocol: "openai" },
+        custom: { label: t("自定义 / 服务商"), url: "", model: "", protocol: "openai" },
+    };
+    // 已下架的内置厂商：只用于把旧工作流迁到 custom，不再出现在下拉里
+    const LEGACY_PROVIDERS = {
+        runninghub: { url: "https://www.runninghub.cn/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "openai" },
+        runninghub_overseas: { url: "https://www.runninghub.ai/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "openai" },
+        openai: { url: "https://api.openai.com/v1", model: "gpt-4.1-mini", protocol: "openai" },
+        gemini: { url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash", protocol: "gemini" },
+        openrouter: { url: "https://openrouter.ai/api/v1", model: "google/gemini-2.5-flash", protocol: "openai" },
+        dashscope: { url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-vl-max", protocol: "openai" },
+        siliconflow: { url: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-VL-72B-Instruct", protocol: "openai" },
+    };
+    /** 旧工作流里存的是已下架的厂商 key：搬到 custom 下，地址/模型/key 全部保留，不丢配置 */
+    const migrateRemovedProviders = settings => {
+        if (!settings) return settings;
+        const legacy = LEGACY_PROVIDERS[String(settings.provider || "").toLowerCase()];
+        if (!legacy) return settings;
+        const oldProvider = String(settings.provider).toLowerCase();
+        const apiKeys = { ...(settings.api_keys || {}) };
+        const providerModels = { ...(settings.provider_models || {}) };
+        const oldKey = apiKeys[oldProvider] || settings.api_key || "";
+        const oldModel = providerModels[oldProvider] || legacy.model || settings.model || "";
+        apiKeys.custom = apiKeys.custom || oldKey;
+        providerModels.custom = providerModels.custom || oldModel;
+        return {
+            ...settings,
+            provider: "custom",
+            api_url: settings.api_url || legacy.url,
+            model: oldModel,
+            protocol: legacy.protocol,
+            api_key: oldKey,
+            api_keys: apiKeys,
+            provider_models: providerModels,
+            has_api_key: !!apiKeys.custom,
+        };
     };
     const migrateProviderApiKeys = settings => {
         if (!settings) return settings;
-        const provider = String(settings.provider || "runninghub").toLowerCase();
+        const provider = String(settings.provider || "assistant").toLowerCase();
         const apiKeys = settings.api_keys && typeof settings.api_keys === "object"
             ? { ...settings.api_keys }
             : {};
@@ -2380,6 +2410,7 @@ function nodeColorToCss(value) {
         };
     };
     const migrateLegacyOptimizerDefault = settings => {
+        settings = migrateRemovedProviders(settings);
         settings = migrateProviderApiKeys(settings);
         if (!settings) return settings;
         const provider = String(settings.provider || "").toLowerCase();
@@ -2391,13 +2422,14 @@ function nodeColorToCss(value) {
             && (!apiUrl || apiUrl === "https://api.openai.com/v1")
             && !hasKey;
         if (!legacyDefault) return settings;
+        // 新用户默认走「提示词小助手」（RunningHub 已从下拉移除）
         return migrateProviderApiKeys({
             ...settings,
             mode: "api",
-            provider: "runninghub",
-            api_url: optimizerProviders.runninghub.url,
-            model: optimizerProviders.runninghub.model,
-            protocol: optimizerProviders.runninghub.protocol,
+            provider: "assistant",
+            api_url: "",
+            model: "",
+            protocol: "openai",
             api_key: "",
             has_api_key: false,
         });
@@ -2472,11 +2504,11 @@ function nodeColorToCss(value) {
             const row = (label, control, custom = false) => { const wrap = make("label"); wrap.className = `ghh3-opt-row${custom ? " ghh3-opt-custom" : ""}`; wrap.append(make("span", {}, t(label)), control); dialog.append(wrap); return control; };
             const provider = row("Provider", make("select"));
             for (const [value, preset] of Object.entries(optimizerProviders)) provider.append(new Option(preset.label, value));
-            provider.value = current.provider || "runninghub";
+            provider.value = current.provider || "assistant";
             const providerApiKeys = { ...(current.api_keys || {}) };
-            if (current.api_key && !providerApiKeys[current.provider || "runninghub"]) providerApiKeys[current.provider || "runninghub"] = current.api_key;
+            if (current.api_key && !providerApiKeys[current.provider || "assistant"]) providerApiKeys[current.provider || "assistant"] = current.api_key;
             const providerModels = { ...(current.provider_models || {}) };
-            if (current.model && !providerModels[current.provider || "runninghub"]) providerModels[current.provider || "runninghub"] = current.model;
+            if (current.model && !providerModels[current.provider || "assistant"]) providerModels[current.provider || "assistant"] = current.model;
             const key = row("API key", make("input")); key.type = "password"; key.value = providerApiKeys[provider.value] || "";
             const readMedia = make("input"); readMedia.type = "checkbox"; readMedia.checked = current.read_media !== false; readMedia.className = "ghh3-opt-check";
             const url = row("API URL", make("input"), true);
@@ -2643,11 +2675,13 @@ function nodeColorToCss(value) {
                 url.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 protocol.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 const preset = optimizerProviders[provider.value];
-                if (!custom) { url.value = preset.url; model.value = preset.model; protocol.value = preset.protocol; }
+                // 只有预设真的带地址时才覆盖输入框：切到「提示词小助手」（url 为空）
+                // 不能把 custom 里已经填好的 URL/Model 清掉，否则切回来就空了。
+                if (!custom && preset && preset.url) { url.value = preset.url; model.value = preset.model; protocol.value = preset.protocol; }
             };
             url.value = current.api_url || ""; model.value = current.model || ""; protocol.value = current.protocol || "openai";
             provider.addEventListener("change", () => {
-                const previousProvider = provider.dataset.previousValue || current.provider || "runninghub";
+                const previousProvider = provider.dataset.previousValue || current.provider || "assistant";
                 providerApiKeys[previousProvider] = key.value;
                 if (previousProvider === "runninghub" || previousProvider === "runninghub_overseas") {
                     providerModels[previousProvider] = runninghubModel.value;

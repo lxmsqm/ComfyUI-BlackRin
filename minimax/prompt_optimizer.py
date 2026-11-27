@@ -517,6 +517,65 @@ def _strip_filenames(text: str) -> str:
     ).strip()
 
 
+_OFFICIAL_SECTIONS = (
+    "subject_definitions",
+    "summary",
+    "retention_analysis",
+    "detailed_description",
+    "integrated_multimodal_description",
+    "overall_soundscape",
+    "non_diegetic_music",
+)
+
+
+def _coerce_json_sections(text: str) -> str:
+    """模型偶尔把六段式输出成 JSON 对象（`{"subject_definitions": {...}}`）。
+
+    这不是我们要的格式：编码器吃的是纯文本六段，而且整段 JSON 粘进提示词框时
+    还会被节点误判成"分段数据包"。这里把它折回 plain text：
+    字段名 + 冒号 + 换行 + 内容；subject_definitions 这种字典展开成「标签：描述」行。
+
+    只在「确实是含官方字段名的 JSON 对象」时才动手，其余原样返回。
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return text
+    fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", raw, flags=re.IGNORECASE)
+    if fence:
+        raw = fence.group(1).strip()
+    if not raw.startswith("{"):
+        return text
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return text
+    if not isinstance(data, dict):
+        return text
+    if not any(key in data for key in _OFFICIAL_SECTIONS):
+        return text
+
+    blocks = []
+    for key in _OFFICIAL_SECTIONS:
+        if key not in data:
+            continue
+        value = data[key]
+        if isinstance(value, dict):
+            body = "\n".join(
+                "%s：%s" % (str(k).strip(), str(v).strip())
+                for k, v in value.items() if str(v).strip()
+            )
+        elif isinstance(value, list):
+            body = "\n".join(
+                ("- " + str(v).strip()) if isinstance(v, str) else str(v)
+                for v in value if str(v).strip()
+            )
+        else:
+            body = str(value).strip()
+        if body:
+            blocks.append("%s:\n%s" % (key, body))
+    return "\n\n".join(blocks) if blocks else text
+
+
 def _format_prompt_sections(text: str) -> str:
     """Force official section headings onto separate lines without rewriting content."""
     headings = (
@@ -528,7 +587,8 @@ def _format_prompt_sections(text: str) -> str:
         "overall_soundscape",
         "non_diegetic_music",
     )
-    pattern = r"\s*(" + "|".join(map(re.escape, headings)) + r")\s*:\s*"
+    # 全角冒号也吃：模型经常写成「subject_definitions：」，不归一的话后续格式化全失效
+    pattern = r"\s*(" + "|".join(map(re.escape, headings)) + r")\s*[:：]\s*"
     formatted = re.sub(pattern, lambda match: f"\n\n{match.group(1).lower()}:\n", str(text), flags=re.IGNORECASE)
     return formatted.strip()
 
@@ -1131,6 +1191,10 @@ async def _run_prompt_optimization(config: dict, payload: dict) -> str:
     result = await _request_async(config, payload)
     if not result:
         raise RuntimeError("API 返回了空提示词")
+    # 模型万一交了 JSON 结构，先折回纯文本六段（规则里明确要 JSON 的除外）
+    _rule_text = str(config.get("rule") or "")
+    if "json" not in _rule_text.lower():
+        result = _coerce_json_sections(result)
     # A selected rule owns the output format. The repairs below force the
     # built-in six/three-section structure, angle-bracket labels and <d> dialogue
     # back onto whatever the model produced, which would silently rewrite a

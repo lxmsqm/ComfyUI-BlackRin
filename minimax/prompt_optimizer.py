@@ -995,8 +995,19 @@ async def _request_async(config: dict, payload: dict) -> str:
                 data = json.loads(text)
     except asyncio.CancelledError:
         raise
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as error:
-        raise RuntimeError(f"API request failed: {error}") from error
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as error:
+        # 连不上 / 超时是最常见的失败：把地址和可能原因写清楚，别只丢一句英文异常
+        host = config.get("api_url") or "(未填地址)"
+        hint = "连不上优化服务"
+        if isinstance(error, asyncio.TimeoutError):
+            hint = "优化服务响应超时"
+        raise RuntimeError(
+            f"{hint}：{host}\n"
+            f"请检查：① 服务是否已启动 ② IP / 端口是否变了 ③ 该地址是否需要走代理\n"
+            f"原始错误：{type(error).__name__}: {error}"
+        ) from error
+    except ValueError as error:
+        raise RuntimeError(f"优化服务返回了无法解析的内容：{error}") from error
     if config["protocol"] == "gemini":
         try:
             result = "".join(part.get("text", "") for part in data["candidates"][0]["content"]["parts"]).strip()

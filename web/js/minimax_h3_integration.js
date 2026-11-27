@@ -4,14 +4,20 @@ import { api } from "/scripts/api.js";
 const OPTIMIZER_DONE_SOUND_URL = new URL("../audio/done.mp3", import.meta.url).href;
 
 const NODE = "BlackRin_MiniMaxH3Integration";
+// 图片一体化也并入本文件：三个节点共用同一套面板，靠 isImageNode() 分流差异
+const NODE_IMAGE = "BlackRin_H3ImageIntegration";
 // 迁移一体化：同一套面板与时间条，只是后端把宽高比锁死为跟随参考视频
 const NODE_MIGRATION = "BlackRin_H3Migration";
-const PANEL_NODES = [NODE, NODE_MIGRATION];
+const PANEL_NODES = [NODE, NODE_MIGRATION, NODE_IMAGE];
 const isPanelNode = name => PANEL_NODES.includes(name);
+/** 图片一体化：单一提示词、无时间条/分段/音频，槽位是纯 ref_image_1..16 */
+const isImageNode = node => node?.comfyClass === NODE_IMAGE;
 const RH_NODE_IDS = [
     NODE,
     NODE_MIGRATION,
+    NODE_IMAGE,
     "BlackRin_MiniMaxH3Adapter",
+    "BlackRin_H3ImageAdapter",
 ];
 const OPTIMIZER_ROUTE = "/blackrin/minimax-h3/prompt-optimizer";
 const WIDTH = 500;
@@ -25,7 +31,11 @@ const ASPECTS = {
     "16:9": 16 / 9, "9:16": 9 / 16, "3:2": 3 / 2, "2:3": 2 / 3, "4:3": 4 / 3,
     "3:4": 3 / 4, "1:1": 1, "21:9": 21 / 9,
 };
-const imageSlots = ["first_frame", "last_frame", ...Array.from({ length: 9 }, (_, i) => `ref_image_${i + 1}`)];
+const IMAGE_SLOTS_VIDEO = ["first_frame", "last_frame", ...Array.from({ length: 9 }, (_, i) => `ref_image_${i + 1}`)];
+const IMAGE_SLOTS_IMAGE = Array.from({ length: 16 }, (_, i) => `ref_image_${i + 1}`);
+const imageSlotsOf = node => (isImageNode(node) ? IMAGE_SLOTS_IMAGE : IMAGE_SLOTS_VIDEO);
+// 模块级并集：只用于「遍历所有可能的槽位」（mediaSlots / 槽位类型校验）
+const imageSlots = [...new Set([...IMAGE_SLOTS_VIDEO, ...IMAGE_SLOTS_IMAGE])];
 const videoSlots = Array.from({ length: 3 }, (_, i) => `ref_video_${i + 1}`);
 const audioSlots = ["hybrid_audio", ...Array.from({ length: 3 }, (_, i) => `ref_audio_${i + 1}`)];
 const mediaSlots = [...imageSlots, ...videoSlots, ...audioSlots];
@@ -528,7 +538,7 @@ function createPanel(node) {
       .ghh3-box{border:1px solid #334a5d;border-radius:8px;padding:7px;margin:0 0 6px;background:#111c27}.ghh3-title{font-size:12px;color:#edf5fb;margin-bottom:3px}.ghh3-hint{font-size:10px;color:#8697a7;line-height:1.3}.ghh3-hint.ghh3-warn{color:#e0715a}
       .ghh3-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}.ghh3-drop{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#08b4ed;cursor:pointer;border:1px dashed #2c5368;border-radius:6px;background:#101b26;padding:4px;box-sizing:border-box}.ghh3-drop:hover{border-color:#0aa4d6;background:#142633}.ghh3-reference-empty{grid-column:1/-1;width:100%;aspect-ratio:5.2/1;align-items:flex-start;justify-content:center;text-align:left;padding:18px 24px}.ghh3-reference-empty .ghh3-drop-icon{font-size:14px;margin:0 7px 0 0}.ghh3-reference-empty .ghh3-drop-title{font-size:12px}.ghh3-reference-empty .ghh3-drop-subtitle{font-size:9px;margin-top:8px}.ghh3-drop-icon{font-size:14px;line-height:1.2;margin:0;color:#08b4ed;font-family:Arial,sans-serif}.ghh3-drop-title{font-size:10px;line-height:1.2;color:#d9e8f2}.ghh3-drop-title-row{display:flex;align-items:center;justify-content:center;gap:5px;line-height:1.2}.ghh3-optional{color:#416d86;font-size:.82em;line-height:1.2;position:relative;top:-1px}.ghh3-audio-drop .ghh3-optional{top:-2px}.ghh3-drop-subtitle{font-size:8px;line-height:1.25;color:#8697a7;margin-top:3px}.ghh3-limit{grid-column:1/-1;color:#d47d8b;font-size:9px;padding:2px 3px 0;text-align:left}
       .ghh3-keygrid{display:grid;grid-template-columns:1fr 1fr;gap:5px}.ghh3-keygrid .ghh3-drop{aspect-ratio:16/9}.ghh3-keygrid .ghh3-drop:not(.ghh3-audio-drop) .ghh3-drop-subtitle{font-size:7px;color:#667887}.ghh3-keygrid .ghh3-audio-card,.ghh3-keygrid .ghh3-audio-drop{grid-column:1/-1;width:100%;height:34px;aspect-ratio:auto;margin-top:3px}
-      .ghh3-card{min-width:0;aspect-ratio:1;border:1px solid #30485c;border-radius:6px;background:#1a2938;overflow:hidden;position:relative;cursor:pointer;touch-action:none}.ghh3-card.ghh3-reorder-source{opacity:.68;cursor:grabbing}.ghh3-card.ghh3-reorder-target{border-color:#18bdd3;box-shadow:0 0 0 2px rgba(24,189,211,.48) inset}.ghh3-reorder-indicator{display:none;position:absolute;left:50%;top:50%;z-index:8;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;background:rgba(11,27,35,.72);color:#d8f4f6;font:18px/24px Arial,sans-serif;pointer-events:none;box-shadow:0 0 0 1px rgba(117,209,218,.6)}.ghh3-card.ghh3-reorder-source .ghh3-reorder-indicator{display:flex}.ghh3-card img,.ghh3-card video{display:block;width:100%;height:100%;object-fit:cover;background:#071018}.ghh3-card:hover img,.ghh3-card:hover video{object-fit:contain}.ghh3-card-name{position:absolute;left:0;right:0;bottom:0;padding:2px 15px 2px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;background:rgba(10,20,30,.6);font-size:7px;line-height:1.15}.ghh3-remove{position:absolute;right:1px;bottom:0;border:0;background:transparent;color:#d3e0ea;cursor:pointer;font-size:11px;z-index:3}.ghh3-media-controls{position:absolute;left:3px;right:3px;bottom:12px;z-index:4;height:14px;display:flex;align-items:center;color:rgba(255,255,255,.6);font:8px/1 Arial,sans-serif;pointer-events:none}.ghh3-media-toggle{width:14px;height:14px;padding:0;border:0;background:rgba(34,52,65,.52)!important;border-radius:50%;cursor:pointer;opacity:1;display:flex;align-items:center;justify-content:center;pointer-events:auto}.ghh3-media-toggle svg{display:block;width:10px;height:10px;overflow:visible}.ghh3-media-time{margin-left:auto}.ghh3-audio-drop{grid-column:1/-1;width:100%;height:34px;min-height:34px;aspect-ratio:auto;margin-top:0;font-size:9px}.ghh3-audio-card{grid-column:1/-1;width:100%;height:34px;aspect-ratio:auto;margin-top:0}.ghh3-prompt{display:block;width:100%;height:100%;min-height:0;resize:none;overflow:auto;box-sizing:border-box;border:0;border-radius:6px;background:#1d2731;color:#e1e9ef;padding:7px 7px calc(7px + 14 * 1.4em);font:12px/1.4 Arial,sans-serif;outline:none;user-select:text;scrollbar-width:thin;scrollbar-color:#1f3540 transparent}.ghh3-prompt::placeholder{color:#52616d;opacity:1}.ghh3-prompt::-webkit-scrollbar{width:5px}.ghh3-prompt::-webkit-scrollbar-track{background:transparent}.ghh3-prompt::-webkit-scrollbar-thumb{background:#1f3540;border-radius:3px}.ghh3-prompt::-webkit-scrollbar-thumb:hover{background:#294955}.ghh3-advanced{position:absolute;left:0;right:0;top:auto;bottom:0;z-index:50;display:flex;flex-direction:column-reverse;height:auto;min-height:0;margin:0;padding:0 0 2px;box-sizing:border-box;user-select:none;overflow:visible;background:var(--ghh3-node-bg,#1d2731)!important;border:0;border-radius:0;box-shadow:none}.ghh3-advanced>summary{background:var(--ghh3-node-bg,#1d2731)!important;padding-left:16px;padding-right:16px}.ghh3-advanced .ghh3-advanced-body{background:var(--ghh3-node-bg,#1d2731)!important;padding-left:16px;padding-right:16px}.ghh3-advanced[open]{background:var(--ghh3-node-bg,#1d2731)!important;border:0;border-radius:0;box-sizing:border-box;box-shadow:none}.ghh3-size{color:#0db5e8;font-size:12px;padding:2px 0 4px}
+      .ghh3-card.br-aspect-anchor{border:2px solid #ff9f1c!important;box-shadow:0 0 0 1px rgba(255,159,28,.45),0 0 10px rgba(255,159,28,.22) inset!important}.ghh3-card.br-aspect-anchor::after{content:"定比例";position:absolute;left:2px;top:2px;z-index:7;padding:0 4px;border-radius:3px;background:#ff9f1c;color:#2a1400;font:bold 8px/12px Arial,sans-serif;pointer-events:none;letter-spacing:.5px}.ghh3-card.br-aspect-anchor .ghh3-card-name{color:#ffd7a1}.ghh3-card{min-width:0;aspect-ratio:1;border:1px solid #30485c;border-radius:6px;background:#1a2938;overflow:hidden;position:relative;cursor:pointer;touch-action:none}.ghh3-card.ghh3-reorder-source{opacity:.68;cursor:grabbing}.ghh3-card.ghh3-reorder-target{border-color:#18bdd3;box-shadow:0 0 0 2px rgba(24,189,211,.48) inset}.ghh3-reorder-indicator{display:none;position:absolute;left:50%;top:50%;z-index:8;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;background:rgba(11,27,35,.72);color:#d8f4f6;font:18px/24px Arial,sans-serif;pointer-events:none;box-shadow:0 0 0 1px rgba(117,209,218,.6)}.ghh3-card.ghh3-reorder-source .ghh3-reorder-indicator{display:flex}.ghh3-card img,.ghh3-card video{display:block;width:100%;height:100%;object-fit:cover;background:#071018}.ghh3-card:hover img,.ghh3-card:hover video{object-fit:contain}.ghh3-card-name{position:absolute;left:0;right:0;bottom:0;padding:2px 15px 2px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;background:rgba(10,20,30,.6);font-size:7px;line-height:1.15}.ghh3-remove{position:absolute;right:1px;bottom:0;border:0;background:transparent;color:#d3e0ea;cursor:pointer;font-size:11px;z-index:3}.ghh3-media-controls{position:absolute;left:3px;right:3px;bottom:12px;z-index:4;height:14px;display:flex;align-items:center;color:rgba(255,255,255,.6);font:8px/1 Arial,sans-serif;pointer-events:none}.ghh3-media-toggle{width:14px;height:14px;padding:0;border:0;background:rgba(34,52,65,.52)!important;border-radius:50%;cursor:pointer;opacity:1;display:flex;align-items:center;justify-content:center;pointer-events:auto}.ghh3-media-toggle svg{display:block;width:10px;height:10px;overflow:visible}.ghh3-media-time{margin-left:auto}.ghh3-audio-drop{grid-column:1/-1;width:100%;height:34px;min-height:34px;aspect-ratio:auto;margin-top:0;font-size:9px}.ghh3-audio-card{grid-column:1/-1;width:100%;height:34px;aspect-ratio:auto;margin-top:0}.ghh3-prompt{display:block;width:100%;height:100%;min-height:0;resize:none;overflow:auto;box-sizing:border-box;border:0;border-radius:6px;background:#1d2731;color:#e1e9ef;padding:7px 7px calc(7px + 14 * 1.4em);font:12px/1.4 Arial,sans-serif;outline:none;user-select:text;scrollbar-width:thin;scrollbar-color:#1f3540 transparent}.ghh3-prompt::placeholder{color:#52616d;opacity:1}.ghh3-prompt::-webkit-scrollbar{width:5px}.ghh3-prompt::-webkit-scrollbar-track{background:transparent}.ghh3-prompt::-webkit-scrollbar-thumb{background:#1f3540;border-radius:3px}.ghh3-prompt::-webkit-scrollbar-thumb:hover{background:#294955}.ghh3-advanced{position:absolute;left:0;right:0;top:auto;bottom:0;z-index:50;display:flex;flex-direction:column-reverse;height:auto;min-height:0;margin:0;padding:0 0 2px;box-sizing:border-box;user-select:none;overflow:visible;background:var(--ghh3-node-bg,#1d2731)!important;border:0;border-radius:0;box-shadow:none}.ghh3-advanced>summary{background:var(--ghh3-node-bg,#1d2731)!important;padding-left:16px;padding-right:16px}.ghh3-advanced .ghh3-advanced-body{background:var(--ghh3-node-bg,#1d2731)!important;padding-left:16px;padding-right:16px}.ghh3-advanced[open]{background:var(--ghh3-node-bg,#1d2731)!important;border:0;border-radius:0;box-sizing:border-box;box-shadow:none}.ghh3-size{color:#0db5e8;font-size:12px;padding:2px 0 4px}
       .ghh3-size{display:flex;justify-content:space-between;align-items:center;color:#0db5e8;font-size:12px;padding:2px 3px 5px}.ghh3-task{white-space:nowrap}.ghh3-dimensions{white-space:nowrap;text-align:right}.ghh3-advanced-row{display:grid;grid-template-columns:minmax(0,1fr) 220px;align-items:center;gap:8px;min-height:30px}.ghh3-advanced-row>label{text-align:left;color:#aebdca}.ghh3-control{width:220px;justify-self:end;box-sizing:border-box;background:#182633;color:#dbe8f1;border:1px solid #354b5d;border-radius:4px;padding:5px}.ghh3-number{width:220px;height:30px;display:grid;grid-template-columns:26px minmax(0,1fr) 26px;align-items:stretch;justify-self:end}.ghh3-number button{border:1px solid #354b5d;background:#182633;color:#c7d8e4;font-size:10px;padding:0;cursor:pointer}.ghh3-number button:first-child{border-radius:4px 0 0 4px}.ghh3-number button:last-child{border-radius:0 4px 4px 0}.ghh3-number input{width:100%;min-width:0;border:1px solid #354b5d;border-left:0;border-right:0;border-radius:0;background:#182633;color:#dbe8f1;padding:5px;box-sizing:border-box}.ghh3-number input::-webkit-inner-spin-button,.ghh3-number input::-webkit-outer-spin-button{appearance:none;margin:0}.ghh3-toggle{position:relative;display:inline-flex;width:38px;height:22px;justify-self:end;cursor:pointer}.ghh3-toggle input{opacity:0;width:0;height:0}.ghh3-toggle span{position:absolute;inset:0;border-radius:12px;background:#39434d;border:1px solid #52616d;transition:.15s}.ghh3-toggle span:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;border-radius:50%;background:#c3cbd1;transition:.15s}.ghh3-toggle input:checked+span{background:#0aa4d6;border-color:#0aa4d6}.ghh3-toggle input:checked+span:before{transform:translateX(16px);background:#fff}
       .ghh3-drop-title-row .ghh3-drop-icon{display:inline-flex;align-items:center;justify-content:center;height:1.2em;font-size:10px;line-height:1;margin:0}
       .ghh3-audio-drop .ghh3-drop-icon{font-size:14px;line-height:1;height:1.2em}
@@ -554,8 +564,10 @@ function createPanel(node) {
     const dimensions = make("span", {}, canvas(widget(node, "aspect")?.value, widget(node, "megapixels")?.value)); dimensions.className = "ghh3-dimensions";
     size.append(taskStatus, dimensions);
     const modes = make("div"); modes.className = "ghh3-modes";
-    const modeText = make("button", {}, t("First/last frames / Text-to-video")); modeText.className = "ghh3-mode";
-    const modeRef = make("button", {}, t("All-purpose reference")); modeRef.className = "ghh3-mode"; modes.append(modeText, modeRef);
+    const modeText = make("button", {}, t(isImageNode(node) ? "文生图" : "First/last frames / Text-to-video")); modeText.className = "ghh3-mode";
+    const modeRef = make("button", {}, t(isImageNode(node) ? "图生图 / 参考" : "All-purpose reference")); modeRef.className = "ghh3-mode"; modes.append(modeText, modeRef);
+    // 图片节点只有「参考 / 图生图」一种用法，模式切换条不显示
+    if (isImageNode(node)) modes.style.display = "none";
     size.style.gridRow = "1";
     modes.style.gridRow = "3";
     root.append(size, modes);
@@ -819,7 +831,7 @@ function createPanel(node) {
     prompt.placeholder = t("Prompt:\nClick an uploaded asset to insert its tag, e.g. <picture 1>, <video 1>, or <audio 2>;\nDouble-click a video to insert its audio tag; mute a video at the top-right to exclude its audio from references");
     const legacyPrompt = cleanPrompt(savedState.prompt) || prompt.value;
     const savedPrompts = savedState.prompts && typeof savedState.prompts === "object" ? savedState.prompts : null;
-    const savedMode = savedState.mode || widget(node, "main_mode")?.value || "text_keyframes";
+    const savedMode = isImageNode(node) ? "all_reference" : (savedState.mode || widget(node, "main_mode")?.value || "text_keyframes");
     const promptByMode = {
         text_keyframes: savedPrompts && hasOwn(savedPrompts, "text_keyframes")
             ? cleanPrompt(savedPrompts.text_keyframes)
@@ -1085,6 +1097,8 @@ function createPanel(node) {
     advanced.appendChild(advancedSummary);
     const advancedBody = make("div", { display: "grid", gap: "5px", padding: "5px 16px 8px" }); advancedBody.className = "ghh3-advanced-body";
     advanced.appendChild(advancedBody);
+    // 图片节点没有音频/驱动/参考缩放/二采这些设置项，整块「高级选项」不显示
+    if (isImageNode(node)) advanced.style.display = "none";
 function nodeColorToCss(value) {
         if (typeof value === "string" && value.trim()) return value.trim();
         if (Array.isArray(value) && value.length >= 3) {
@@ -1349,8 +1363,8 @@ function nodeColorToCss(value) {
     });
     function applyLocale() {
         taskStatus.textContent = `${resolvedTaskType()} · ${taskLabel(resolvedTaskType())}`;
-        modeText.textContent = t("First/last frames / Text-to-video");
-        modeRef.textContent = t("All-purpose reference");
+        modeText.textContent = t(isImageNode(node) ? "文生图" : "First/last frames / Text-to-video");
+        modeRef.textContent = t(isImageNode(node) ? "图生图 / 参考" : "All-purpose reference");
         prompt.placeholder = t("Prompt:\nClick an uploaded asset to insert its tag, e.g. <picture 1>, <video 1>, or <audio 2>;\nDouble-click a video to insert its audio tag; mute a video at the top-right to exclude its audio from references");
         advancedSummary.textContent = t("Advanced options");
         for (const label of advancedLabels.values()) label.textContent = t(label.dataset.ghh3Translation);
@@ -1489,7 +1503,7 @@ function nodeColorToCss(value) {
     const MEDIA_SLOT_KIND = slot => (slot.startsWith("ref_image_") || slot === "first_frame" || slot === "last_frame")
         ? "image"
         : slot.startsWith("ref_video_") ? "video" : "audio";
-    const freeSlotFor = kind => (kind === "image" ? imageSlots.filter(name => name.startsWith("ref_image_"))
+    const freeSlotFor = kind => (kind === "image" ? imageSlotsOf(node).filter(name => name.startsWith("ref_image_"))
         : kind === "video" ? videoSlots
         : audioSlots.filter(name => name.startsWith("ref_audio_"))).find(name => !media.has(name));
     const fileExistsInInput = async fileName => {
@@ -1661,6 +1675,8 @@ function nodeColorToCss(value) {
     tlBar.append(tlTitle, tlHint, tlAdd, tlImport, tlExport, segmentsNotice);
     const tlStrip = make("div"); tlStrip.style.cssText = "display:flex;flex-direction:column;gap:2px;min-width:0;padding:0";
     timelineWrap.append(tlBar, tlStrip);
+    // 图片节点没有分段概念，整条分组时间条不显示
+    if (isImageNode(node)) timelineWrap.style.display = "none";
     const alignFrames = n => { n = Math.max(5, Math.round(n)); return n + (((5 - n) % 17) + 17) % 17; };
     const groupFrames = g => alignFrames((Number(g.duration) || 5) * 24);
     const syncDurationWidget = () => {
@@ -2134,8 +2150,8 @@ function nodeColorToCss(value) {
     let adaptiveRatio = 16 / 9;
     function firstVisualEntry() {
         const slots = state.mode === "text_keyframes"
-            ? ["first_frame", "last_frame"]
-            : [...videoSlots, ...imageSlots.slice(2)];
+            ? (isImageNode(node) ? [] : ["first_frame", "last_frame"])
+            : [...videoSlots, ...imageSlotsOf(node).slice(isImageNode(node) ? 0 : 2)];
         return slots.map(slot => media.get(slot)).find(entry =>
             entry && (entry.kind === "image" || entry.kind === "video")
         ) || null;
@@ -2190,8 +2206,16 @@ function nodeColorToCss(value) {
         if (!media.has(name) && value && value !== "(none)") media.set(name, { name: value, kind: kindOf({ name: value, type: "" }) });
     }
     syncMediaWidgets();
-    function nextSlot(kind) { const slots = kind === "image" ? imageSlots.slice(2) : kind === "video" ? videoSlots : audioSlots.slice(1); return slots.find(s => !media.has(s)); }
+    function nextSlot(kind) {
+        const imageList = isImageNode(node) ? imageSlotsOf(node) : imageSlotsOf(node).slice(2);
+        const slots = kind === "image" ? imageList : kind === "video" ? videoSlots : audioSlots.slice(1);
+        return slots.find(s => !media.has(s));
+    }
     function resolvedTaskType() {
+        // 图片节点：文生图恒为 T2I；图生图模式下有图就是 REF2I
+        if (isImageNode(node)) {
+            return [...media.keys()].some(slot => imageSlotsOf(node).includes(slot)) ? "REF2I" : "T2I";
+        }
         const first = media.has("first_frame");
         const last = media.has("last_frame");
         const refs = [...media.entries()].some(([slot]) => !["first_frame", "last_frame", "hybrid_audio"].includes(slot));
@@ -3691,9 +3715,19 @@ function nodeColorToCss(value) {
             window.addEventListener("pointercancel", finish, true);
         };
     }
+    // 图片节点：画布长宽比取自第一张参考图（后端 vae_images[0]），给那个槽位打橙色「定比例」标记。
+    // 视频节点没有这个概念，直接返回 null，行为与原来完全一致。
+    function aspectAnchorSlot() {
+        if (!isImageNode(node)) return null;
+        return [...media.entries()]
+            .filter(([name, entry]) => name.startsWith("ref_image_") && entry?.kind === "image")
+            .map(([name]) => name)
+            .sort((a, b) => parseInt(a.split("_").pop(), 10) - parseInt(b.split("_").pop(), 10))[0] || null;
+    }
     function card(slot, entry, square = true) {
         const item = make("div"); item.className = "ghh3-card"; if (!square) item.style.aspectRatio = "16/9"; if (slot === "hybrid_audio") { item.classList.add("ghh3-audio-card"); item.style.aspectRatio = "auto"; }
         item.dataset.ghh3DropSlot = slot;
+        if (slot === aspectAnchorSlot()) { item.classList.add("br-aspect-anchor"); item.title = "首图：决定画布长宽比"; }
         const reorderIndicator = make("div", {}, "✥"); reorderIndicator.className = "ghh3-reorder-indicator"; item.appendChild(reorderIndicator);
         if (entry.kind === "image") { const img = make("img"); img.src = fileUrl(entry.name); img.draggable = false; item.appendChild(img); }
         else if (entry.kind === "video") { const video = make("video"); video.src = fileUrl(entry.name); video.muted = !!entry.muted; video.preload = "metadata"; video.draggable = false; item.appendChild(video); const play = make("button", {}, "▶"); play.className = "ghh3-play"; play.onclick = e => { e.stopPropagation(); video.muted = !!entry.muted; video.paused ? video.play() : video.pause(); }; item.appendChild(play); const clipTrim = make("button", {}, "✂"); clipTrim.className = "ghh3-video-trim-button"; clipTrim.title = t("Trim video / fps / resolution"); clipTrim.onclick = e => { e.stopPropagation(); openVideoTrimEditor(slot, entry); }; item.appendChild(clipTrim); if (entry.trimEnd > entry.trimStart || (Number(entry.refFps) || 24) !== 24) { const range = entry.trimEnd > entry.trimStart ? `${formatAudioMediaTime(entry.trimStart)}-${formatAudioMediaTime(entry.trimEnd)}s` : ""; const fps = (Number(entry.refFps) || 24) !== 24 ? ` ${Number(entry.refFps)}fps` : ""; item.appendChild(make("div", {}, `${range}${fps}`.trim())).className = "ghh3-trim-range-badge"; } }
@@ -4055,6 +4089,8 @@ function nodeColorToCss(value) {
         }
         promptByMode[state.mode] = prompt.value;
         state.mode = nextMode;
+        // 图片节点只有一个提示词，切模式保留同一份文本
+        if (isImageNode(node)) promptByMode.text_keyframes = promptByMode.all_reference = prompt.value;
         optimizerBefore = optimizerBeforeByMode[state.mode] ?? null;
         prompt.value = cleanPrompt(promptByMode[state.mode]);
         // 分组模式：换成该组在**新模式**下的文本（每模式各存一份，不再跨模式共享）

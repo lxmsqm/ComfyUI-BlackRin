@@ -1792,11 +1792,14 @@ function nodeColorToCss(value) {
             tlStrip.appendChild(block);
             startFrame += frames;
         });
-        // 刷新网页 / 加载工作流后也要按当前激活组同步一次「恢复优化前」按钮，
-        // 否则 optimizer_before 明明还在 segments_json 里，按钮却是隐藏的。
+        // 刷新网页 / 加载工作流后也要同步一次「恢复优化前」按钮。
+        // 注意两个来源都要看：分组模式看 brGroups[].optimizer_before，
+        // 单提示词/参考模式看 optimizerBefore（= optimizerBeforeByMode[当前模式]）。
+        // 只看分组的话，参考模式下没有分组就会被误判成"没有快照"而把按钮藏起来。
         resetPrompt.classList.toggle(
             "visible",
-            !!(brGroups[brActive] && brGroups[brActive].optimizer_before) && !upstreamConnected()
+            (!!(brGroups[brActive] && brGroups[brActive].optimizer_before) || optimizerBefore != null)
+            && !upstreamConnected()
         );
     };
     tlAdd.onclick = () => {
@@ -2786,18 +2789,22 @@ function nodeColorToCss(value) {
     optimizerGear.onclick = openOptimizerSettings;
     resetPrompt.onclick = () => {
         if (upstreamConnected()) return;
-        // 分组模式：只还原激活组自己的优化前文本，绝不跨组/跨上下文
+        // 分组模式：只还原激活组自己的优化前文本，绝不跨组/跨上下文。
+        // 注意：该组没有快照时要往下落到「按模式存的快照」，不能直接 return——
+        // 参考模式（all_reference）的优化结果存的是 optimizerBeforeByMode，
+        // 分组那一份可能是 null，直接 return 会表现为「点了没反应」。
         if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
             const own = brGroups[brActive].optimizer_before;
-            if (own == null) return;
-            prompt.value = cleanPrompt(own); renderPromptHighlights(); setPromptWidget(node, prompt.value);
-            promptByMode[state.mode] = prompt.value;
-            brGroups[brActive].prompt = prompt.value;
-            brGroups[brActive].optimizer_before = null;
-            saveGroups();
-            optimizerBeforeByMode[state.mode] = null; optimizerBefore = null;
-            resetPrompt.classList.remove("visible"); persistState();
-            return;
+            if (own != null) {
+                prompt.value = cleanPrompt(own); renderPromptHighlights(); setPromptWidget(node, prompt.value);
+                promptByMode[state.mode] = prompt.value;
+                brGroups[brActive].prompt = prompt.value;
+                brGroups[brActive].optimizer_before = null;
+                saveGroups();
+                optimizerBeforeByMode[state.mode] = null; optimizerBefore = null;
+                resetPrompt.classList.remove("visible"); persistState();
+                return;
+            }
         }
         if (optimizerBefore == null) return;
         if (optimizerCache?.originalPrompt === optimizerBefore) optimizerCache.result = prompt.value;
@@ -4019,7 +4026,11 @@ function nodeColorToCss(value) {
         }
         renderPromptHighlights();
         setPromptWidget(node, prompt.value);
-        resetPrompt.classList.toggle("visible", optimizerBefore != null);
+        // 双来源：分组快照 or 当前模式的快照，任一存在就显示「恢复优化前」
+        resetPrompt.classList.toggle(
+            "visible",
+            optimizerBefore != null || !!(brGroups[brActive] && brGroups[brActive].optimizer_before),
+        );
         setWidget(node, "main_mode", state.mode);
         persistState();
         modeText.classList.toggle("active", state.mode === "text_keyframes");
@@ -4128,7 +4139,10 @@ function nodeColorToCss(value) {
                 optimizerBeforeByMode.text_keyframes = restoredBeforeByMode.text_keyframes ?? null;
                 optimizerBeforeByMode.all_reference = restoredBeforeByMode.all_reference ?? null;
                 optimizerBefore = optimizerBeforeByMode[state.mode] ?? null;
-                resetPrompt.classList.toggle("visible", optimizerBefore != null);
+                resetPrompt.classList.toggle(
+                    "visible",
+                    optimizerBefore != null || !!(brGroups[brActive] && brGroups[brActive].optimizer_before),
+                );
                 setWidget(node, "main_mode", state.mode);
                 media.clear();
                 // 槽位类型校验：历史错位可能把图片名写进音频槽（反之亦然），恢复时丢弃

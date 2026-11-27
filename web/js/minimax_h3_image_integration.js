@@ -1067,7 +1067,7 @@ function createPanel(node) {
             .replace(/^doubao(?=[-_.\d])/i, "Doubao")
             .replace(/^minimax(?=[-_.\d])/i, "MiniMax");
         const providerName = ({
-            runninghub: "RunningHub 国内版", runninghub_overseas: "RunningHub 海外版", openai: "OpenAI", gemini: "Google Gemini",
+            openai: "OpenAI", gemini: "Google Gemini",
             openrouter: "OpenRouter", dashscope: "阿里云百炼", siliconflow: "SiliconFlow",
             assistant: "提示词小助手", custom: "API",
         })[optimizerSettings.provider] || "API";
@@ -2452,7 +2452,7 @@ function nodeColorToCss(value) {
     // 派生数据，绝不能以存档里的旧值为准——否则用户删掉的规则、换掉的服务
     // 会一直留在下拉里。这里无条件用后端的值覆盖，只有请求失败才退回旧值。
     const OPTIMIZER_DERIVED_KEYS = [
-        "runninghub_models", "runninghub_overseas_models", "assistant_services",
+        "assistant_services",
         "assistant_rules", "has_api_key",
     ];
     async function loadOptimizerSettings() {
@@ -2472,8 +2472,6 @@ function nodeColorToCss(value) {
                 console.warn("MiniMax H3 prompt optimizer settings refresh failed; using saved settings:", error);
                 optimizerSettings = {
                     ...optimizerSettings,
-                    runninghub_models: optimizerSettings.runninghub_models || [],
-                    runninghub_overseas_models: optimizerSettings.runninghub_overseas_models || [],
                     assistant_rules: optimizerSettings.assistant_rules || [],
                     assistant_services: optimizerSettings.assistant_services || [],
                 };
@@ -2498,6 +2496,9 @@ function nodeColorToCss(value) {
     }
     function openOptimizerSettings() {
         loadOptimizerSettings().then(current => {
+            // 防重复：连点齿轮/连开两个节点时，先清掉已经开着的配置弹窗，
+            // 否则会叠出好几层，保存时关掉的还是最上面那层。
+            document.querySelectorAll(".ghh3-opt-overlay").forEach(el => el.remove());
             const overlay = make("div"); overlay.className = "ghh3-opt-overlay";
             const dialog = make("div"); dialog.className = "ghh3-opt-dialog"; overlay.append(dialog);
             const title = make("div", {}, t("LLM Prompt Optimization Configuration")); title.className = "ghh3-opt-title"; dialog.append(title);
@@ -2542,29 +2543,6 @@ function nodeColorToCss(value) {
                 new Option("OpenAI Responses", "responses"),
                 new Option("Gemini GenerateContent", "gemini"),
             );
-            const runninghubModelGroup = make("div"); runninghubModelGroup.className = "ghh3-opt-model-row";
-            const runninghubModel = make("select"); runninghubModel.className = "ghh3-opt-model-native"; runninghubModelGroup.append(runninghubModel);
-            const runninghubModelPicker = make("button"); runninghubModelPicker.type = "button"; runninghubModelPicker.className = "ghh3-opt-model-picker"; runninghubModelGroup.append(runninghubModelPicker);
-            const refreshRunninghubModels = make("button"); refreshRunninghubModels.type = "button"; refreshRunninghubModels.className = "ghh3-opt-refresh"; refreshRunninghubModels.innerHTML = refreshIcon; refreshRunninghubModels.title = "刷新 RunningHub 模型"; refreshRunninghubModels.setAttribute("aria-label", "刷新 RunningHub 模型"); runninghubModelGroup.append(refreshRunninghubModels);
-            const runninghubModelMenu = make("div"); runninghubModelMenu.className = "ghh3-opt-model-menu";
-            const runninghubModelSearch = make("input"); runninghubModelSearch.type = "search"; runninghubModelSearch.placeholder = t("Search models"); runninghubModelSearch.className = "ghh3-opt-model-search";
-            const runninghubModelResults = make("div"); runninghubModelResults.className = "ghh3-opt-model-results";
-            runninghubModelMenu.append(runninghubModelSearch, runninghubModelResults); runninghubModelGroup.append(runninghubModelMenu);
-            row("Model", runninghubModelGroup);
-            const runninghubModelsByProvider = {
-                runninghub: [...(current.runninghub_models || [])],
-                runninghub_overseas: [...(current.runninghub_overseas_models || current.runninghub_models || [])],
-            };
-            let runninghubModels = runninghubModelsByProvider[provider.value] || [];
-            const fillRunninghubModels = (models = runninghubModels, preserveValue = runninghubModel.value || current.model || "openai/gpt-5.6-sol") => {
-                runninghubModels = models || [];
-                runninghubModel.replaceChildren(...runninghubModels.map(value => new Option(value, value)));
-                if ([...runninghubModel.options].some(option => option.value === preserveValue)) runninghubModel.value = preserveValue;
-                else if ([...runninghubModel.options].some(option => option.value === "openai/gpt-5.6-sol")) runninghubModel.value = "openai/gpt-5.6-sol";
-                refreshRunninghubModelPicker(); renderRunninghubModels();
-            };
-            for (const value of runninghubModels) runninghubModel.append(new Option(value, value));
-            runninghubModel.value = providerModels[provider.value] || "openai/gpt-5.6-sol";
             const assistantServices = [...(current.assistant_services || [])];
             const assistantService = row("服务", make("select"));
             assistantService.append(new Option(assistantServices.length ? "请选择服务" : "（未找到小助手服务）", ""));
@@ -2585,28 +2563,6 @@ function nodeColorToCss(value) {
             ruleSelect.append(new Option("默认（节点内置）", ""));
             for (const name of assistantRules) ruleSelect.append(new Option(name, name));
             ruleSelect.value = assistantRules.includes(current.rule) ? current.rule : "";
-            const refreshRunninghubModelPicker = () => { runninghubModelPicker.textContent = runninghubModel.value || ""; };
-            const renderRunninghubModels = () => {
-                const keyword = runninghubModelSearch.value.trim().toLowerCase();
-                const filtered = keyword ? runninghubModels.filter(value => value.toLowerCase().includes(keyword)) : runninghubModels;
-                runninghubModelResults.replaceChildren();
-                if (!filtered.length) {
-                    const empty = make("div", {}, t("No matching models")); empty.className = "ghh3-opt-model-empty"; runninghubModelResults.append(empty); return;
-                }
-                for (const value of filtered) {
-                    const option = make("button", {}, value); option.type = "button"; option.className = "ghh3-opt-model-option";
-                    option.classList.toggle("selected", value === runninghubModel.value);
-                    option.onclick = () => { runninghubModel.value = value; refreshRunninghubModelPicker(); runninghubModelMenu.classList.remove("open"); };
-                    runninghubModelResults.append(option);
-                }
-            };
-            refreshRunninghubModelPicker(); renderRunninghubModels();
-            runninghubModelPicker.onclick = () => {
-                const opening = !runninghubModelMenu.classList.contains("open");
-                runninghubModelMenu.classList.toggle("open", opening);
-                if (opening) { runninghubModelSearch.value = ""; renderRunninghubModels(); requestAnimationFrame(() => runninghubModelSearch.focus()); }
-            };
-            runninghubModelSearch.addEventListener("input", renderRunninghubModels);
             const maxTokens = row("Maximum output tokens", make("input"));
             maxTokens.type = "number"; maxTokens.min = "512"; maxTokens.max = "32768"; maxTokens.step = "512";
             maxTokens.title = "单次优化的输出上限；推理型模型会先思考再回答，留够预算才不会空手而归";
@@ -2627,7 +2583,6 @@ function nodeColorToCss(value) {
             unloadHint.textContent = t("Only works for local / LAN API addresses (llama-swap, Ollama, LM Studio…); cloud platforms are ignored");
             dialog.append(unloadHint);
             dialog.addEventListener("pointerdown", event => {
-                if (!runninghubModelGroup.contains(event.target)) runninghubModelMenu.classList.remove("open");
                 if (!customModelGroup.contains(event.target)) customModelMenu.classList.remove("open");
             });
             const withRefreshState = async (button, action) => {
@@ -2636,18 +2591,6 @@ function nodeColorToCss(value) {
                 try { await action(); }
                 finally { button.classList.remove("loading"); button.disabled = false; }
             };
-            refreshRunninghubModels.onclick = () => withRefreshState(refreshRunninghubModels, async () => {
-                const selectedProvider = provider.value === "runninghub_overseas" ? "runninghub_overseas" : "runninghub";
-                const data = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/runninghub-models?provider=${encodeURIComponent(selectedProvider)}`, { cache: "no-store" });
-                const refreshed = selectedProvider === "runninghub_overseas" ? data.runninghub_overseas_models : data.runninghub_models;
-                runninghubModelsByProvider[selectedProvider] = [...(refreshed || [])];
-                fillRunninghubModels(runninghubModelsByProvider[selectedProvider]);
-                optimizerSettings = {
-                    ...(optimizerSettings || current),
-                    runninghub_models: [...runninghubModelsByProvider.runninghub],
-                    runninghub_overseas_models: [...runninghubModelsByProvider.runninghub_overseas],
-                };
-            }).catch(error => alert(error.message));
             refreshCustomModels.onclick = () => withRefreshState(refreshCustomModels, async () => {
                 const fetched = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/custom-models`, {
                     method: "POST",
@@ -2665,12 +2608,10 @@ function nodeColorToCss(value) {
             const sync = () => {
                 const custom = provider.value === "custom";
                 const assistant = provider.value === "assistant";
-                const runninghub = provider.value === "runninghub" || provider.value === "runninghub_overseas";
                 dialog.classList.toggle("custom", custom);
                 key.closest("label")?.classList.toggle("ghh3-opt-hidden", assistant);
                 assistantService.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
                 assistantModel.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
-                runninghubModel.closest("label")?.classList.toggle("ghh3-opt-hidden", !runninghub);
                 model.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 url.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 protocol.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
@@ -2683,15 +2624,8 @@ function nodeColorToCss(value) {
             provider.addEventListener("change", () => {
                 const previousProvider = provider.dataset.previousValue || current.provider || "assistant";
                 providerApiKeys[previousProvider] = key.value;
-                if (previousProvider === "runninghub" || previousProvider === "runninghub_overseas") {
-                    providerModels[previousProvider] = runninghubModel.value;
-                }
                 key.value = providerApiKeys[provider.value] || "";
                 provider.dataset.previousValue = provider.value;
-                if (provider.value === "runninghub" || provider.value === "runninghub_overseas") {
-                    const preserve = providerModels[provider.value] || optimizerProviders[provider.value].model;
-                    fillRunninghubModels(runninghubModelsByProvider[provider.value] || [], preserve);
-                }
                 sync();
             }); sync();
             provider.dataset.previousValue = provider.value;
@@ -2701,8 +2635,7 @@ function nodeColorToCss(value) {
             save.onclick = async () => {
                 const preset = optimizerProviders[provider.value];
                 const assistant = provider.value === "assistant";
-                const selectedModel = assistant ? assistantModel.value
-                    : (provider.value === "runninghub" || provider.value === "runninghub_overseas") ? runninghubModel.value : model.value;
+                const selectedModel = assistant ? assistantModel.value : model.value;
                 providerApiKeys[provider.value] = key.value;
                 providerModels[provider.value] = selectedModel;
                 normalizeMaxTokens();
@@ -2784,22 +2717,15 @@ function nodeColorToCss(value) {
     }
     async function optimizerMediaPayload(specs) {
         const payload = [];
-        const runninghub = ["runninghub", "runninghub_overseas"].includes(optimizerSettings?.provider);
-        let runninghubImages = 0;
-        let runninghubVideo = false;
         for (const spec of specs) {
             const entry = media.get(spec.slot);
             if (!entry) continue;
             const item = { kind: spec.kind, label: spec.label, labelOnly: !!spec.labelOnly };
             if (optimizerSettings?.read_media !== false && spec.kind === "image") {
-                if (!runninghub || runninghubImages < 8) item.images = [await lowImageData(fileUrl(entry.name))];
-                runninghubImages++;
+                item.images = [await lowImageData(fileUrl(entry.name))];
             }
             else if (optimizerSettings?.read_media !== false && spec.kind === "video" && !spec.labelOnly) {
-                if (runninghub) {
-                    if (!runninghubVideo) item.source_name = entry.name;
-                    runninghubVideo = true;
-                } else item.images = await lowVideoFrames(fileUrl(entry.name));
+                item.images = await lowVideoFrames(fileUrl(entry.name));
             }
             payload.push(item);
         }
@@ -2893,22 +2819,6 @@ function nodeColorToCss(value) {
             timer = setTimeout(() => { signal?.removeEventListener("abort", aborted); resolve(); }, milliseconds);
             signal?.addEventListener("abort", aborted, { once: true });
         });
-    }
-    async function runRunningHubOptimization(requestBody, signal) {
-        const started = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/start`, {
-            method: "POST", signal,
-            body: new Blob([JSON.stringify(requestBody)], { type: "application/json" }),
-        }, false);
-        if (started.status !== "running") throw new Error(started.error || "Prompt optimization failed");
-        while (true) {
-            await waitWithAbort(1500, signal);
-            const status = await fetchOptimizerJson(
-                `${OPTIMIZER_ROUTE}/status?request_id=${encodeURIComponent(requestBody.request_id)}`,
-                { cache: "no-store", signal },
-                false,
-            );
-            if (status.status === "success") return status;
-        }
     }
     async function runPromptOptimization({ automatic = false } = {}) {
         if (optimizing || upstreamConnected() || node.graph !== app.graph || (node.mode != null && node.mode !== 0)) return false;

@@ -31,11 +31,11 @@ MAX_TOKENS_CEILING = 32768
 DEFAULT_MAX_TOKENS = 8192
 
 DEFAULT_CONFIG = {
-    "provider": "runninghub",
-    "api_url": "https://www.runninghub.cn/openapi/v2",
+    "provider": "assistant",
+    "api_url": "",
     "api_key": "",
     "model": "openai/gpt-5.6-sol",
-    "protocol": "runninghub",
+    "protocol": "openai",
     "read_media": True,
     "unload_after": False,
     "max_tokens": DEFAULT_MAX_TOKENS,
@@ -47,62 +47,10 @@ PROVIDERS = {
     "openrouter": ("https://openrouter.ai/api/v1", "google/gemini-2.5-flash", "openai"),
     "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max", "openai"),
     "siliconflow": ("https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-VL-72B-Instruct", "openai"),
-    "runninghub": ("https://www.runninghub.cn/openapi/v2", "openai/gpt-5.6-sol", "runninghub"),
-    "runninghub_overseas": ("https://www.runninghub.ai/openapi/v2", "openai/gpt-5.6-sol", "runninghub"),
 }
-RUNNINGHUB_APP_ID = "2089252473927196673"
-RUNNINGHUB_OVERSEAS_APP_ID = "2090668262521675778"
-RUNNINGHUB_APP_NODES = {
-    "runninghub": {
-        "video": "11",
-        "images": ("2", "12", "13", "14", "15", "16", "17", "18"),
-        "model": "1",
-        "system_prompt": "9",
-        "user_prompt": "10",
-        "max_tokens": "19",
-    },
-    "runninghub_overseas": {
-        "video": "11",
-        "images": ("20", "12", "13", "14", "15", "16", "17", "18"),
-        "model": "1",
-        "system_prompt": "10",
-        "user_prompt": "9",
-        "max_tokens": "21",
-    },
-}
-RUNNINGHUB_MODELS = (
-    "openai/gpt-5.6-sol", "openai/gpt-5.6-sol-saver", "openai/gpt-5.6-terra",
-    "openai/gpt-5.6-terra-saver", "openai/gpt-5.5", "openai/gpt-5.5-saver",
-    "openai/gpt-5.6-luna", "openai/gpt-5.6-luna-saver", "google/gemini-3.1-flash-lite-preview",
-    "google/gemini-3.5-flash", "openai/gpt-5.5-pro", "anthropic/claude-fable-5",
-    "openai/gpt-5.4-pro", "anthropic/claude-opus-5", "anthropic/claude-opus-4.8",
-    "anthropic/claude-opus-4.7", "glm-5.2", "anthropic/claude-opus-4.6", "openai/gpt-5.4",
-    "openai/gpt-5.3-codex", "glm-5.1", "glm-5-turbo", "qwen/qwen3.8-max",
-    "anthropic/claude-sonnet-4.6", "glm-5", "anthropic/claude-sonnet-5",
-    "qwen/qwen3.7-max", "glm-5v-turbo", "qwen/qwen3.7-plus", "deepseek/deepseek-v4-pro",
-    "xai/grok-4.6", "xai/grok-4.5", "xai/grok-4.3", "qwen/qwen3.6-plus",
-    "google/gemini-3.1-pro-preview", "bytedance/doubao-seed-evolving",
-    "bytedance/doubao-seed-2.1-pro", "anthropic/claude-sonnet-4.5",
-    "bytedance/doubao-seed-2.1-turbo", "anthropic/claude-opus-4.5",
-    "bytedance/doubao-seed-2.0-pro", "bytedance/doubao-seed-2.0-code",
-    "deepseek/deepseek-v4-flash", "qwen/qwen3.6-flash", "openai/gpt-5.4-mini",
-    "openai/gpt-5.4-nano", "google/gemini-3-flash-preview", "google/gemini-2.5-flash",
-    "bytedance/doubao-seed-2.0-lite", "bytedance/doubao-seed-2.0-mini",
-    "minimax/minimax-m2.7", "anthropic/claude-haiku-4.5", "qwen/qwen3.6-max-preview",
-    "anthropic/claude-haiku-4.5-saver", "anthropic/claude-opus-4.6-saver",
-    "anthropic/claude-opus-4.7-saver", "anthropic/claude-opus-4.8-saver",
-    "anthropic/claude-sonnet-4.6-saver", "google/gemini-2.5-pro",
-    "google/gemini-3.5-flash-lite", "google/gemini-3.6-flash",
-)
-RUNNINGHUB_DETAIL_URL = f"https://www.runninghub.cn/call-api/api-detail/{RUNNINGHUB_APP_ID}?apiType=4"
-RUNNINGHUB_OVERSEAS_DETAIL_URL = f"https://www.runninghub.ai/zh-cn/call-api/api-detail/{RUNNINGHUB_OVERSEAS_APP_ID}?apiType=4"
-_RUNNINGHUB_MODELS_CACHE: tuple[str, ...] = RUNNINGHUB_MODELS
-_RUNNINGHUB_OVERSEAS_MODELS_CACHE: tuple[str, ...] = RUNNINGHUB_MODELS
-_RUNNINGHUB_MODELS_LOCK = asyncio.Lock()
 _ROUTES_REGISTERED = False
 _ACTIVE_REQUESTS: dict[str, asyncio.Task] = {}
 _ACTIVE_CANCEL_EVENTS: dict[str, threading.Event] = {}
-_ACTIVE_RH_TASKS: dict[str, tuple[str, str, str]] = {}
 _ASYNC_OPTIMIZER_JOBS: dict[str, asyncio.Task] = {}
 
 
@@ -158,10 +106,8 @@ def _normalize_config(data: dict | None) -> dict:
     provider = str(data.get("provider") or current["provider"]).lower()
     preset = PROVIDERS.get(provider)
     api_keys = data.get("api_keys") if isinstance(data.get("api_keys"), dict) else {}
-    # RunningHub CN and overseas accounts use different API keys. Prefer the
-    # key saved for the selected provider so a stale generic api_key cannot be
-    # sent to the other region after switching platforms or restoring a
-    # workflow. Keep the legacy api_key fallback for older saved workflows.
+    # 优先用「当前服务商对应的那把 key」，避免切换服务商后把上一家的 key
+    # 发到新地址；旧工作流只存了通用 api_key 时回落到它。
     provider_api_key = api_keys.get(provider)
     api_key = provider_api_key if provider_api_key is not None else (
         data.get("api_key") if "api_key" in data else current["api_key"]
@@ -192,65 +138,12 @@ def _public_config(config: dict) -> dict:
         **config,
         "api_key": "",
         "has_api_key": bool(config.get("api_key")),
-        "runninghub_models": list(_RUNNINGHUB_MODELS_CACHE),
-        "runninghub_overseas_models": list(_RUNNINGHUB_OVERSEAS_MODELS_CACHE),
         "assistant_services": [
             {"name": service["name"], "models": service["models"]}
             for service in _optimizer_services()
         ],
         "assistant_rules": [item["name"] for item in _optimizer_rules()],
     }
-
-
-def _runninghub_models_from_page(html: str) -> tuple[str, ...]:
-    """Extract node 1 model choices from the public RunningHub Nuxt payload."""
-    match = re.search(
-        r'<script[^>]+id=["\']__NUXT_DATA__["\'][^>]*>([\s\S]*?)</script>',
-        html,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return ()
-    try:
-        payload = json.loads(match.group(1))
-    except (TypeError, ValueError):
-        return ()
-    candidates = []
-    for value in payload if isinstance(payload, list) else ():
-        if not isinstance(value, str) or not value.startswith("[["):
-            continue
-        try:
-            field_data = json.loads(value)
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(field_data, list) or not field_data or not isinstance(field_data[0], list):
-            continue
-        models = [str(item).strip() for item in field_data[0] if isinstance(item, str) and str(item).strip()]
-        if len(models) >= 5 and sum("/" in item for item in models) >= 3:
-            candidates.append(models)
-    if not candidates:
-        return ()
-    return tuple(dict.fromkeys(max(candidates, key=len)))
-
-
-async def _refresh_runninghub_models(provider: str = "runninghub") -> tuple[str, ...]:
-    global _RUNNINGHUB_MODELS_CACHE, _RUNNINGHUB_OVERSEAS_MODELS_CACHE
-    overseas = provider == "runninghub_overseas"
-    detail_url = RUNNINGHUB_OVERSEAS_DETAIL_URL if overseas else RUNNINGHUB_DETAIL_URL
-    async with _RUNNINGHUB_MODELS_LOCK:
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
-            async with session.get(detail_url) as response:
-                if response.status != 200:
-                    raise RuntimeError(f"RunningHub model list returned HTTP {response.status}")
-                models = _runninghub_models_from_page(await response.text())
-                if not models:
-                    raise RuntimeError("RunningHub model list was not found in the application detail")
-                if overseas:
-                    _RUNNINGHUB_OVERSEAS_MODELS_CACHE = models
-                else:
-                    _RUNNINGHUB_MODELS_CACHE = models
-                return models
 
 
 def _resolve_input_file(name: str) -> Path:
@@ -274,93 +167,7 @@ def _ffmpeg_path() -> str:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception as error:
-        raise RuntimeError("RunningHub 视频预处理需要 FFmpeg，但当前 ComfyUI 环境未找到 FFmpeg") from error
-
-
-async def _runninghub_video(source_name: str, duration: float, output_path: Path) -> None:
-    source = _resolve_input_file(source_name)
-    limit = max(0.1, float(duration or 5))
-    # fps=1 chooses one frame for every source second without changing source
-    # playback speed. Audio is trimmed at the same point and copied at normal speed.
-    command = [
-        _ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-y",
-        "-i", str(source), "-t", f"{limit:.3f}",
-        "-vf", "fps=1:start_time=0:round=down,scale=512:512:force_original_aspect_ratio=decrease:force_divisible_by=2",
-        "-r", "1", "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-shortest", str(output_path),
-    ]
-    process = await asyncio.create_subprocess_exec(
-        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    _stdout, stderr = await process.communicate()
-    if process.returncode:
-        raise RuntimeError("RunningHub 参考视频预处理失败: " + stderr.decode("utf-8", "replace")[-1000:])
-
-
-async def _runninghub_upload(session: aiohttp.ClientSession, api_key: str, *, path: Path | None = None,
-                             data_url: str | None = None, filename: str = "reference.jpg",
-                             api_base: str = "https://www.runninghub.cn/openapi/v2") -> str:
-    form = aiohttp.FormData()
-    if path is not None:
-        form.add_field("file", path.read_bytes(), filename=path.name, content_type="video/mp4")
-    else:
-        try:
-            header, encoded = str(data_url or "").split(",", 1)
-            mime = header.split(";", 1)[0].split(":", 1)[1]
-            form.add_field("file", base64.b64decode(encoded), filename=filename, content_type=mime)
-        except Exception as error:
-            raise ValueError("RunningHub 参考图片数据无效") from error
-    async with session.post(
-        f"{api_base}/media/upload/binary",
-        headers={"Authorization": f"Bearer {api_key}"}, data=form,
-    ) as response:
-        body = await response.text()
-        if response.status >= 400:
-            raise RuntimeError(f"RunningHub 素材上传失败 ({response.status}): {body[:1000]}")
-        data = json.loads(body)
-    if data.get("code") not in (0, "0", None):
-        raise RuntimeError(f"RunningHub 素材上传失败: {data.get('message') or data.get('msg') or data}")
-    result = data.get("data") or {}
-    value = result.get("fileName") or result.get("download_url")
-    if not value:
-        raise RuntimeError("RunningHub 素材上传响应缺少 fileName")
-    return str(value)
-
-
-async def _runninghub_cancel(api_key: str, task_id: str, host: str = "https://www.runninghub.cn") -> None:
-    if not api_key or not task_id:
-        return
-    timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(
-            f"{host}/task/openapi/cancel",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"apiKey": api_key, "taskId": task_id},
-        ) as response:
-            await response.read()
-
-
-async def _runninghub_result_text(session: aiohttp.ClientSession, results: list) -> str:
-    for item in results:
-        if isinstance(item, dict) and str(item.get("text") or "").strip():
-            return str(item["text"]).strip()
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-        output_type = str(item.get("outputType") or item.get("fileType") or "").lower().lstrip(".")
-        url = item.get("url") or item.get("fileUrl")
-        if output_type not in {"txt", "text"} or not url:
-            continue
-        async with session.get(str(url)) as response:
-            body = await response.read()
-            if response.status >= 400:
-                raise RuntimeError(f"RunningHub TXT 结果下载失败 ({response.status})")
-        for encoding in ("utf-8-sig", "utf-8", "gb18030"):
-            try:
-                return body.decode(encoding).strip()
-            except UnicodeDecodeError:
-                continue
-    raise RuntimeError("RunningHub 返回结果中没有文本或 TXT 文件")
+        raise RuntimeError("参考视频预处理需要 FFmpeg，但当前 ComfyUI 环境未找到 FFmpeg") from error
 
 
 def _endpoint(config: dict) -> str:
@@ -1093,141 +900,6 @@ def _request_parts(config: dict, payload: dict):
     return url, headers, body
 
 
-async def _request_runninghub(config: dict, payload: dict) -> str:
-    api_key = str(config.get("api_key") or "")
-    provider = str(config.get("provider") or "runninghub").lower()
-    overseas = provider == "runninghub_overseas"
-    app_nodes = RUNNINGHUB_APP_NODES["runninghub_overseas" if overseas else "runninghub"]
-    rh_base = "https://www.runninghub.ai" if overseas else "https://www.runninghub.cn"
-    rh_api_base = f"{rh_base}/openapi/v2"
-    rh_app_id = RUNNINGHUB_OVERSEAS_APP_ID if overseas else RUNNINGHUB_APP_ID
-    rh_host = "https://www.runninghub.ai" if overseas else "https://www.runninghub.cn"
-    model_cache = _RUNNINGHUB_OVERSEAS_MODELS_CACHE if overseas else _RUNNINGHUB_MODELS_CACHE
-    request_id = str(payload.get("request_id") or "")
-    media = payload.get("media") if isinstance(payload.get("media"), list) else []
-    task = str(payload.get("task") or "T2VA")
-    duration = float(payload.get("duration") or 5)
-    labels = [str(item.get("label")) for item in media if item.get("label")]
-    system_prompt, _ = _resolve_system_prompt(config, payload)
-    mapping_notes = []
-    video_node = str(app_nodes["video"])
-    image_nodes = tuple(str(node_id) for node_id in app_nodes["images"])
-    node_values = {video_node: "None", **{node_id: "None" for node_id in image_nodes}}
-    timeout = aiohttp.ClientTimeout(total=200)
-    temp_dir = Path(tempfile.mkdtemp(prefix="gh_h3_rh_"))
-    task_id = ""
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            image_index = 0
-            video_uploaded = False
-            for item in media:
-                kind = str(item.get("kind") or "")
-                label = str(item.get("label") or "")
-                if kind == "image":
-                    images = item.get("images") or []
-                    if image_index < len(image_nodes) and images:
-                        node_id = image_nodes[image_index]
-                        node_values[node_id] = await _runninghub_upload(
-                            session, api_key, data_url=images[0], filename=f"reference_{image_index + 1}.jpg", api_base=rh_api_base
-                        )
-                        mapping_notes.append(f"{label} corresponds to uploaded image {image_index + 1}.")
-                        image_index += 1
-                    else:
-                        mapping_notes.append(f"{label} exists as an image reference label, but its visual file was not transmitted.")
-                elif kind == "video" and not item.get("labelOnly"):
-                    if not video_uploaded and item.get("source_name"):
-                        processed = temp_dir / "reference_1fps.mp4"
-                        await _runninghub_video(str(item["source_name"]), duration, processed)
-                        node_values[video_node] = await _runninghub_upload(session, api_key, path=processed, api_base=rh_api_base)
-                        mapping_notes.append(f"{label} corresponds to the uploaded 1 FPS reference video.")
-                        video_uploaded = True
-                    else:
-                        mapping_notes.append(f"{label} exists as a video reference label, but its visual file was not transmitted.")
-                elif kind == "audio":
-                    mapping_notes.append(f"{label} is an audio reference label; audio data is not separately transmitted.")
-
-            user_prompt = "User prompt:\n" + str(payload.get("prompt") or "") + _output_language_mandate()
-            if mapping_notes:
-                user_prompt += "\n\nReference mapping:\n" + "\n".join(mapping_notes)
-            node_info = [
-                {"nodeId": video_node, "fieldName": "file", "fieldValue": node_values[video_node]},
-                *[
-                    {"nodeId": node_id, "fieldName": "image", "fieldValue": node_values[node_id]}
-                    for node_id in image_nodes
-                ],
-                {"nodeId": str(app_nodes["model"]), "fieldName": "model", "fieldValue": str(config.get("model") or model_cache[0])},
-                {"nodeId": str(app_nodes["system_prompt"]), "fieldName": "Text", "fieldValue": system_prompt},
-                {"nodeId": str(app_nodes["user_prompt"]), "fieldName": "Text", "fieldValue": user_prompt},
-                {"nodeId": str(app_nodes["max_tokens"]), "fieldName": "value", "fieldValue": str(_clamp_max_tokens(config.get("max_tokens")))},
-            ]
-            async with session.post(
-                f"{rh_api_base}/run/ai-app/{rh_app_id}",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={"nodeInfoList": node_info, "instanceType": "default", "usePersonalQueue": False},
-            ) as response:
-                body = await response.text()
-                if response.status >= 400:
-                    raise RuntimeError(f"RunningHub 应用启动失败 ({response.status}): {body[:1000]}")
-                started = json.loads(body)
-            if started.get("code") not in (0, "0", None):
-                raise RuntimeError(f"RunningHub 应用启动失败: {started.get('msg') or started}")
-            start_data = started.get("data") if isinstance(started.get("data"), dict) else started
-            task_id = str(start_data.get("taskId") or "")
-            if not task_id:
-                edition = "海外版" if overseas else "国内版"
-                error_code = str(start_data.get("errorCode") or started.get("errorCode") or "").strip()
-                error_message = str(start_data.get("errorMessage") or started.get("errorMessage") or "").strip()
-                if error_code or error_message:
-                    details = ": ".join(part for part in (error_code, error_message) if part)
-                    raise RuntimeError(f"RunningHub {edition}应用启动失败：{details}")
-                raise RuntimeError(
-                    f"RunningHub {edition}应用启动响应缺少 taskId；请确认使用的是{edition}专用 API Key。"
-                    f"服务端响应: {body[:800]}"
-                )
-            if request_id:
-                _ACTIVE_RH_TASKS[request_id] = (api_key, task_id, rh_host)
-
-            while True:
-                cancel_event = payload.get("_cancel_event")
-                if cancel_event is not None and cancel_event.is_set():
-                    await _runninghub_cancel(api_key, task_id, rh_host)
-                    raise asyncio.CancelledError
-                await asyncio.sleep(2)
-                async with session.post(
-                    f"{rh_api_base}/query",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={"taskId": task_id},
-                ) as response:
-                    body = await response.text()
-                    if response.status >= 400:
-                        raise RuntimeError(f"RunningHub 任务查询失败 ({response.status}): {body[:1000]}")
-                    queried = json.loads(body)
-                if queried.get("code") not in (0, "0", None):
-                    raise RuntimeError(f"RunningHub 任务查询失败: {queried.get('msg') or queried}")
-                query_data = queried.get("data") if isinstance(queried.get("data"), dict) else queried
-                status = str(query_data.get("status") or query_data.get("taskStatus") or "").upper()
-                if status == "SUCCESS":
-                    return await _runninghub_result_text(session, query_data.get("results") or [])
-                if status in {"FAILED", "CANCELLED", "CANCELED"}:
-                    message = query_data.get("errorMessage") or query_data.get("failedReason") or status
-                    raise RuntimeError(f"RunningHub 提示词优化失败: {message}")
-    except asyncio.CancelledError:
-        active = _ACTIVE_RH_TASKS.get(request_id)
-        if active:
-            await _runninghub_cancel(*active)
-        elif task_id:
-            await _runninghub_cancel(api_key, task_id, rh_host)
-        raise
-    except asyncio.TimeoutError as error:
-        if task_id:
-            await _runninghub_cancel(api_key, task_id, rh_host)
-        raise RuntimeError("RunningHub 提示词优化超过200秒，云端任务已取消") from error
-    finally:
-        if request_id:
-            _ACTIVE_RH_TASKS.pop(request_id, None)
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
 def _is_local_api_host(api_url: str) -> bool:
     """只有本机 / 局域网 / mDNS 的 API 才值得试卸载；云端一律跳过。"""
     try:
@@ -1281,8 +953,6 @@ async def _unload_api_model(config: dict) -> None:
     """
     if not config.get("unload_after"):
         return
-    if str(config.get("provider") or "").lower() in {"runninghub", "runninghub_overseas"}:
-        return
     api_url = str(config.get("api_url") or "")
     if not _is_local_api_host(api_url):
         return
@@ -1314,8 +984,6 @@ async def _unload_api_model(config: dict) -> None:
 async def _request_async(config: dict, payload: dict) -> str:
     if config.get("provider") == "assistant":
         config = _resolve_assistant_provider(config)
-    if config.get("provider") == "runninghub" or config.get("protocol") == "runninghub":
-        return await _request_runninghub(config, payload)
     url, headers, body = _request_parts(config, payload)
     try:
         timeout = aiohttp.ClientTimeout(total=200)
@@ -1345,28 +1013,6 @@ async def _request_async(config: dict, payload: dict) -> str:
 
 async def get_prompt_optimizer_config(_request):
     return web.json_response(_public_config(DEFAULT_CONFIG))
-
-
-async def refresh_runninghub_models(_request):
-    try:
-        provider = str(_request.query.get("provider") or "runninghub").lower()
-        if provider not in {"runninghub", "runninghub_overseas"}:
-            provider = "runninghub"
-        models = await _refresh_runninghub_models(provider)
-        return web.json_response({
-            "provider": provider,
-            "runninghub_models": list(models) if provider == "runninghub" else list(_RUNNINGHUB_MODELS_CACHE),
-            "runninghub_overseas_models": list(models) if provider == "runninghub_overseas" else list(_RUNNINGHUB_OVERSEAS_MODELS_CACHE),
-        })
-    except Exception as error:
-        if str(_request.query.get("provider") or "").lower() == "runninghub_overseas":
-            return web.json_response({
-                "provider": "runninghub_overseas",
-                "runninghub_models": list(_RUNNINGHUB_MODELS_CACHE),
-                "runninghub_overseas_models": list(_RUNNINGHUB_OVERSEAS_MODELS_CACHE),
-                "warning": f"RunningHub 海外版模型页暂时无法公开读取，继续使用内置列表: {error}",
-            })
-        return web.json_response({"error": str(error)}, status=502)
 
 
 def _custom_models_url(api_url: str) -> str:
@@ -1553,13 +1199,7 @@ async def cancel_prompt_optimization(request):
         task.cancel()
     if async_job is not None and async_job is not task:
         async_job.cancel()
-    runninghub_task = _ACTIVE_RH_TASKS.pop(request_id, None)
-    if runninghub_task is not None:
-        try:
-            await _runninghub_cancel(*runninghub_task)
-        except Exception:
-            pass
-    return web.json_response({"cancelled": task is not None or async_job is not None or cancel_event is not None or runninghub_task is not None})
+    return web.json_response({"cancelled": task is not None or async_job is not None or cancel_event is not None})
 
 
 def register_prompt_optimizer_routes() -> bool:
@@ -1571,7 +1211,6 @@ def register_prompt_optimizer_routes() -> bool:
         return False
     routes = instance.routes
     routes.get("/blackrin/minimax-h3/prompt-optimizer/config")(get_prompt_optimizer_config)
-    routes.get("/blackrin/minimax-h3/prompt-optimizer/runninghub-models")(refresh_runninghub_models)
     routes.post("/blackrin/minimax-h3/prompt-optimizer/custom-models")(list_custom_api_models)
     routes.post("/blackrin/minimax-h3/prompt-optimizer/config")(save_prompt_optimizer_config)
     routes.post("/blackrin/minimax-h3/prompt-optimizer/optimize")(optimize_prompt)

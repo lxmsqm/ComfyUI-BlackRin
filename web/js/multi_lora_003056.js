@@ -2854,7 +2854,6 @@ class MultiLoRALoader {
       e.stopPropagation();
       this.toggleTriggers(item.name);
     };
-    row.appendChild(trigBtn);
 
     // 信息区
     const info = document.createElement("div");
@@ -2982,6 +2981,7 @@ class MultiLoRALoader {
 
     info.appendChild(weightRow);
     row.appendChild(info);
+    row.appendChild(trigBtn);   // grid 第3列：在信息区之后、删除按钮之前
 
     // ---- 拖拽排序：只有缩略图是拖动手柄（拖滑块/名字都不会误触发） ----
     row.dataset.idx = String(index);

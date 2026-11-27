@@ -1464,6 +1464,19 @@ function nodeColorToCss(value) {
             if (!promptText.trim() || !Number.isFinite(duration) || duration <= 0) { bad.push(index + 1); return; }
             const group = { prompt: promptText, duration: Math.min(30, Math.max(1, Math.round(duration * 100) / 100)) };
             if (item.cont === false) group.cont = false;
+            // 分模式数据：老数据没有这两个字段，回落到 prompt / optimizer_before
+            if (item.modePrompts && typeof item.modePrompts === "object") {
+                group.modePrompts = {
+                    text_keyframes: typeof item.modePrompts.text_keyframes === "string" ? item.modePrompts.text_keyframes : promptText,
+                    all_reference: typeof item.modePrompts.all_reference === "string" ? item.modePrompts.all_reference : promptText,
+                };
+            }
+            if (item.modeBefore && typeof item.modeBefore === "object") {
+                group.modeBefore = {
+                    text_keyframes: item.modeBefore.text_keyframes ?? null,
+                    all_reference: item.modeBefore.all_reference ?? null,
+                };
+            }
             for (const [key, value] of Object.entries(item)) {
                 if (key === "prompt" || key === "duration" || key === "cont") continue;
                 group[key] = value;
@@ -1659,6 +1672,14 @@ function nodeColorToCss(value) {
     const saveGroups = () => {
         // 全组提示词都为空时不落盘（写空串）：后端靠 segments_json 非空来判定多段，
         // 存一个空组只会让它抛「第 1 组提示词是空的」，而页面上字其实在 prompt 控件里。
+        // 落盘前把「当前模式下的文本」同步进 modePrompts，保证 prompt 永远等于当前模式的值
+        brGroups.forEach(group => {
+            if (!group) return;
+            group.modePrompts = group.modePrompts || {};
+            if (typeof group.prompt === "string") group.modePrompts[state.mode] = group.prompt;
+            group.modeBefore = group.modeBefore || {};
+            if (group.optimizer_before !== undefined) group.modeBefore[state.mode] = group.optimizer_before ?? null;
+        });
         const hasText = brGroups.some(group => String((group && group.prompt) || "").trim());
         const value = brGroups.length >= 1 && hasText ? JSON.stringify(brGroups) : "";
         if (segmentsWidget && segmentsWidget.value !== value) segmentsWidget.value = value;
@@ -2769,9 +2790,14 @@ function nodeColorToCss(value) {
             prompt.value = value; renderPromptHighlights(); setPromptWidget(node, value);
             syncGroupPrompt(value);
             if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
-                brGroups[brActive].optimizer_before = before ?? null;
-                // 必须立刻落盘：optimizer_before 只写进内存的 brGroups 而不 saveGroups()
-                // 的话，segments_json 里就没有这份快照，刷新网页后「恢复优化前」就失效了。
+                const g = brGroups[brActive];
+                g.modePrompts = g.modePrompts || {};
+                g.modePrompts[targetMode] = value;
+                g.modeBefore = g.modeBefore || {};
+                g.modeBefore[targetMode] = before ?? null;
+                g.optimizer_before = before ?? null;
+                // 必须立刻落盘：只写内存不 saveGroups() 的话 segments_json 里没有这份快照，
+                // 刷新网页后「恢复优化前」就失效了。
                 saveGroups();
             }
             resetPrompt.classList.add("visible");
@@ -2794,12 +2820,18 @@ function nodeColorToCss(value) {
         // 参考模式（all_reference）的优化结果存的是 optimizerBeforeByMode，
         // 分组那一份可能是 null，直接 return 会表现为「点了没反应」。
         if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
-            const own = brGroups[brActive].optimizer_before;
+            const g = brGroups[brActive];
+            const own = (g.modeBefore && g.modeBefore[state.mode] !== undefined)
+                ? g.modeBefore[state.mode]
+                : g.optimizer_before;
             if (own != null) {
                 prompt.value = cleanPrompt(own); renderPromptHighlights(); setPromptWidget(node, prompt.value);
                 promptByMode[state.mode] = prompt.value;
                 brGroups[brActive].prompt = prompt.value;
-                brGroups[brActive].optimizer_before = null;
+                if (g.modeBefore) g.modeBefore[state.mode] = null;
+                g.optimizer_before = null;
+                // 恢复的文本也写回该模式那一份
+                if (g.modePrompts) g.modePrompts[state.mode] = prompt.value;
                 saveGroups();
                 optimizerBeforeByMode[state.mode] = null; optimizerBefore = null;
                 resetPrompt.classList.remove("visible"); persistState();
@@ -4014,15 +4046,31 @@ function nodeColorToCss(value) {
     window.addEventListener("dragover", captureMaterialDrop, true);
     window.addEventListener("drop", captureMaterialDrop, true);
     function switchMode(nextMode) {
+        // 切走前：把当前激活组在**当前模式**下的文本与快照存进该组
+        const leavingGroup = brGroups[brActive];
+        if (leavingGroup) {
+            leavingGroup.modePrompts = leavingGroup.modePrompts || {};
+            if (typeof leavingGroup.prompt === "string") leavingGroup.modePrompts[state.mode] = leavingGroup.prompt;
+            leavingGroup.modeBefore = leavingGroup.modeBefore || {};
+            leavingGroup.modeBefore[state.mode] = leavingGroup.optimizer_before ?? null;
+        }
         promptByMode[state.mode] = prompt.value;
         state.mode = nextMode;
         // 图片节点只有一个提示词，切模式保留同一份文本
         if (IS_IMAGE_NODE) promptByMode.text_keyframes = promptByMode.all_reference = prompt.value;
         optimizerBefore = optimizerBeforeByMode[state.mode] ?? null;
         prompt.value = cleanPrompt(promptByMode[state.mode]);
-        // 分组模式：编辑器始终显示激活组的提示词（组内容跨模式共享）
+        // 分组模式：换成该组在**新模式**下的文本（每模式各存一份，不再跨模式共享）
         if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
-            prompt.value = cleanPrompt(brGroups[brActive].prompt || "");
+            const g = brGroups[brActive];
+            const modePrompts = g.modePrompts || {};
+            const nextText = typeof modePrompts[nextMode] === "string" ? modePrompts[nextMode] : (g.prompt || "");
+            g.prompt = nextText;
+            g.modePrompts = { ...modePrompts, [nextMode]: nextText };
+            const modeBefore = g.modeBefore || {};
+            g.optimizer_before = modeBefore[nextMode] ?? null;
+            optimizerBefore = g.optimizer_before ?? optimizerBeforeByMode[nextMode] ?? null;
+            prompt.value = cleanPrompt(nextText);
         }
         renderPromptHighlights();
         setPromptWidget(node, prompt.value);
@@ -4037,6 +4085,9 @@ function nodeColorToCss(value) {
         modeRef.classList.toggle("active", state.mode === "all_reference");
         updateAdvancedVisibility();
         render();
+        // 立刻落盘：modePrompts / modeBefore 只写内存的话 segments_json 里没有，
+        // 刷新后两套文本就退化成同一份了。
+        saveGroups();
     }
     modeText.onclick = () => switchMode("text_keyframes");
     modeRef.onclick = () => switchMode("all_reference");

@@ -1065,7 +1065,7 @@ function createPanel(node) {
             .replace(/^doubao(?=[-_.\d])/i, "Doubao")
             .replace(/^minimax(?=[-_.\d])/i, "MiniMax");
         const providerName = ({
-            runninghub: "RunningHub 国内版", runninghub_overseas: "RunningHub 海外版", openai: "OpenAI", gemini: "Google Gemini",
+            openai: "OpenAI", gemini: "Google Gemini",
             openrouter: "OpenRouter", dashscope: "阿里云百炼", siliconflow: "SiliconFlow",
             assistant: "提示词小助手", custom: "API",
         })[optimizerSettings.provider] || "API";
@@ -1460,6 +1460,19 @@ function nodeColorToCss(value) {
             if (!promptText.trim() || !Number.isFinite(duration) || duration <= 0) { bad.push(index + 1); return; }
             const group = { prompt: promptText, duration: Math.min(30, Math.max(1, Math.round(duration * 100) / 100)) };
             if (item.cont === false) group.cont = false;
+            // 分模式数据：老数据没有这两个字段，回落到 prompt / optimizer_before
+            if (item.modePrompts && typeof item.modePrompts === "object") {
+                group.modePrompts = {
+                    text_keyframes: typeof item.modePrompts.text_keyframes === "string" ? item.modePrompts.text_keyframes : promptText,
+                    all_reference: typeof item.modePrompts.all_reference === "string" ? item.modePrompts.all_reference : promptText,
+                };
+            }
+            if (item.modeBefore && typeof item.modeBefore === "object") {
+                group.modeBefore = {
+                    text_keyframes: item.modeBefore.text_keyframes ?? null,
+                    all_reference: item.modeBefore.all_reference ?? null,
+                };
+            }
             for (const [key, value] of Object.entries(item)) {
                 if (key === "prompt" || key === "duration" || key === "cont") continue;
                 group[key] = value;
@@ -1666,6 +1679,14 @@ function nodeColorToCss(value) {
     const saveGroups = () => {
         // 全组提示词都为空时不落盘（写空串）：后端靠 segments_json 非空来判定多段，
         // 存一个空组只会让它抛「第 1 组提示词是空的」，而页面上字其实在 prompt 控件里。
+        // 落盘前把「当前模式下的文本」同步进 modePrompts，保证 prompt 永远等于当前模式的值
+        brGroups.forEach(group => {
+            if (!group) return;
+            group.modePrompts = group.modePrompts || {};
+            if (typeof group.prompt === "string") group.modePrompts[state.mode] = group.prompt;
+            group.modeBefore = group.modeBefore || {};
+            if (group.optimizer_before !== undefined) group.modeBefore[state.mode] = group.optimizer_before ?? null;
+        });
         const hasText = brGroups.some(group => String((group && group.prompt) || "").trim());
         const value = brGroups.length >= 1 && hasText ? JSON.stringify(brGroups) : "";
         if (segmentsWidget && segmentsWidget.value !== value) segmentsWidget.value = value;
@@ -1803,6 +1824,15 @@ function nodeColorToCss(value) {
             tlStrip.appendChild(block);
             startFrame += frames;
         });
+        // 刷新网页 / 加载工作流后也要同步一次「恢复优化前」按钮。
+        // 注意两个来源都要看：分组模式看 brGroups[].optimizer_before，
+        // 单提示词/参考模式看 optimizerBefore（= optimizerBeforeByMode[当前模式]）。
+        // 只看分组的话，参考模式下没有分组就会被误判成"没有快照"而把按钮藏起来。
+        resetPrompt.classList.toggle(
+            "visible",
+            (!!(brGroups[brActive] && brGroups[brActive].optimizer_before) || optimizerBefore != null)
+            && !upstreamConnected()
+        );
     };
     tlAdd.onclick = () => {
         const baseDuration = brGroups.length
@@ -1822,7 +1852,6 @@ function nodeColorToCss(value) {
     // 主提示词编辑框直接编辑当前选中组（复用原优化器/标签/媒体标记流程）。
     // 面板自身的 input 处理器先同步隐藏 prompt 控件，这里读控件值即为最新文本。
     prompt.addEventListener("input", () => {
-        console.log("[BlackRin H3] input事件: brActive=" + brActive + " 组数=" + brGroups.length + " 文本=" + String(prompt.textContent).slice(0, 30));
         if (brActive < 0 || brActive >= brGroups.length) return;
         brGroups[brActive].prompt = prompt.textContent ?? "";
         saveGroups();
@@ -2345,20 +2374,50 @@ function nodeColorToCss(value) {
         const b = document.activeElement === prompt ? prompt.selectionEnd : a;
         prompt.setRangeText(`<Audio ${ordinal}>`, a, b, "end"); renderPromptHighlights(); promptByMode[state.mode] = prompt.value; setPromptWidget(node, prompt.value); persistState();
     }
+    // 下拉里只保留两项：小助手（用本机配置的服务列表）和自己填的服务商。
+    // 原先把 OpenAI/Gemini/RunningHub… 这些硬编码厂商也塞进来，和「服务列表」概念重叠，
+    // 且实际都用不上——统一收成「提示词小助手 + 自定义」。
     const optimizerProviders = {
         assistant: { label: "提示词小助手", url: "", model: "", protocol: "openai" },
-        runninghub: { label: "RunningHub 国内版（推荐）", url: "https://www.runninghub.cn/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "runninghub" },
-        runninghub_overseas: { label: "RunningHub 海外版", url: "https://www.runninghub.ai/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "runninghub" },
-        openai: { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4.1-mini", protocol: "openai" },
-        gemini: { label: "Google Gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash", protocol: "gemini" },
-        openrouter: { label: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "google/gemini-2.5-flash", protocol: "openai" },
-        dashscope: { label: "阿里云百炼", url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-vl-max", protocol: "openai" },
-        siliconflow: { label: "SiliconFlow", url: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-VL-72B-Instruct", protocol: "openai" },
-        custom: { label: t("Custom"), url: "", model: "", protocol: "openai" },
+        custom: { label: t("自定义 / 服务商"), url: "", model: "", protocol: "openai" },
+    };
+    // 已下架的内置厂商：只用于把旧工作流迁到 custom，不再出现在下拉里
+    const LEGACY_PROVIDERS = {
+        runninghub: { url: "https://www.runninghub.cn/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "openai" },
+        runninghub_overseas: { url: "https://www.runninghub.ai/openapi/v2", model: "openai/gpt-5.6-sol", protocol: "openai" },
+        openai: { url: "https://api.openai.com/v1", model: "gpt-4.1-mini", protocol: "openai" },
+        gemini: { url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash", protocol: "gemini" },
+        openrouter: { url: "https://openrouter.ai/api/v1", model: "google/gemini-2.5-flash", protocol: "openai" },
+        dashscope: { url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-vl-max", protocol: "openai" },
+        siliconflow: { url: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-VL-72B-Instruct", protocol: "openai" },
+    };
+    /** 旧工作流里存的是已下架的厂商 key：搬到 custom 下，地址/模型/key 全部保留，不丢配置 */
+    const migrateRemovedProviders = settings => {
+        if (!settings) return settings;
+        const legacy = LEGACY_PROVIDERS[String(settings.provider || "").toLowerCase()];
+        if (!legacy) return settings;
+        const oldProvider = String(settings.provider).toLowerCase();
+        const apiKeys = { ...(settings.api_keys || {}) };
+        const providerModels = { ...(settings.provider_models || {}) };
+        const oldKey = apiKeys[oldProvider] || settings.api_key || "";
+        const oldModel = providerModels[oldProvider] || legacy.model || settings.model || "";
+        apiKeys.custom = apiKeys.custom || oldKey;
+        providerModels.custom = providerModels.custom || oldModel;
+        return {
+            ...settings,
+            provider: "custom",
+            api_url: settings.api_url || legacy.url,
+            model: oldModel,
+            protocol: legacy.protocol,
+            api_key: oldKey,
+            api_keys: apiKeys,
+            provider_models: providerModels,
+            has_api_key: !!apiKeys.custom,
+        };
     };
     const migrateProviderApiKeys = settings => {
         if (!settings) return settings;
-        const provider = String(settings.provider || "runninghub").toLowerCase();
+        const provider = String(settings.provider || "assistant").toLowerCase();
         const apiKeys = settings.api_keys && typeof settings.api_keys === "object"
             ? { ...settings.api_keys }
             : {};
@@ -2387,6 +2446,7 @@ function nodeColorToCss(value) {
         };
     };
     const migrateLegacyOptimizerDefault = settings => {
+        settings = migrateRemovedProviders(settings);
         settings = migrateProviderApiKeys(settings);
         if (!settings) return settings;
         const provider = String(settings.provider || "").toLowerCase();
@@ -2398,13 +2458,14 @@ function nodeColorToCss(value) {
             && (!apiUrl || apiUrl === "https://api.openai.com/v1")
             && !hasKey;
         if (!legacyDefault) return settings;
+        // 新用户默认走「提示词小助手」（RunningHub 已从下拉移除）
         return migrateProviderApiKeys({
             ...settings,
             mode: "api",
-            provider: "runninghub",
-            api_url: optimizerProviders.runninghub.url,
-            model: optimizerProviders.runninghub.model,
-            protocol: optimizerProviders.runninghub.protocol,
+            provider: "assistant",
+            api_url: "",
+            model: "",
+            protocol: "openai",
             api_key: "",
             has_api_key: false,
         });
@@ -2427,7 +2488,7 @@ function nodeColorToCss(value) {
     // 派生数据，绝不能以存档里的旧值为准——否则用户删掉的规则、换掉的服务
     // 会一直留在下拉里。这里无条件用后端的值覆盖，只有请求失败才退回旧值。
     const OPTIMIZER_DERIVED_KEYS = [
-        "runninghub_models", "runninghub_overseas_models", "assistant_services",
+        "assistant_services",
         "assistant_rules", "has_api_key",
     ];
     async function loadOptimizerSettings() {
@@ -2447,8 +2508,6 @@ function nodeColorToCss(value) {
                 console.warn("MiniMax H3 prompt optimizer settings refresh failed; using saved settings:", error);
                 optimizerSettings = {
                     ...optimizerSettings,
-                    runninghub_models: optimizerSettings.runninghub_models || [],
-                    runninghub_overseas_models: optimizerSettings.runninghub_overseas_models || [],
                     assistant_rules: optimizerSettings.assistant_rules || [],
                     assistant_services: optimizerSettings.assistant_services || [],
                 };
@@ -2473,18 +2532,23 @@ function nodeColorToCss(value) {
     }
     function openOptimizerSettings() {
         loadOptimizerSettings().then(current => {
+            // 防重复：连点齿轮/连开两个节点时，先清掉已经开着的配置弹窗，
+            // 否则会叠出好几层，保存时关掉的还是最上面那层。
+            document.querySelectorAll(".ghh3-opt-overlay").forEach(el => el.remove());
             const overlay = make("div"); overlay.className = "ghh3-opt-overlay";
             const dialog = make("div"); dialog.className = "ghh3-opt-dialog"; overlay.append(dialog);
             const title = make("div", {}, t("LLM Prompt Optimization Configuration")); title.className = "ghh3-opt-title"; dialog.append(title);
             const row = (label, control, custom = false) => { const wrap = make("label"); wrap.className = `ghh3-opt-row${custom ? " ghh3-opt-custom" : ""}`; wrap.append(make("span", {}, t(label)), control); dialog.append(wrap); return control; };
             const provider = row("Provider", make("select"));
             for (const [value, preset] of Object.entries(optimizerProviders)) provider.append(new Option(preset.label, value));
-            provider.value = current.provider || "runninghub";
+            provider.value = current.provider || "assistant";
             const providerApiKeys = { ...(current.api_keys || {}) };
-            if (current.api_key && !providerApiKeys[current.provider || "runninghub"]) providerApiKeys[current.provider || "runninghub"] = current.api_key;
+            if (current.api_key && !providerApiKeys[current.provider || "assistant"]) providerApiKeys[current.provider || "assistant"] = current.api_key;
             const providerModels = { ...(current.provider_models || {}) };
-            if (current.model && !providerModels[current.provider || "runninghub"]) providerModels[current.provider || "runninghub"] = current.model;
-            const key = row("API key", make("input")); key.type = "password"; key.value = providerApiKeys[provider.value] || "";
+            if (current.model && !providerModels[current.provider || "assistant"]) providerModels[current.provider || "assistant"] = current.model;
+            // API Key 输入框已移除：手填的 key 会随工作流序列化，分享工作流等于把 key 送出去。
+            // 需要 key 的服务统一在「提示词小助手」的服务列表里配（全局、不进工作流）。
+            const key = { value: providerApiKeys[provider.value] || "" };
             const readMedia = make("input"); readMedia.type = "checkbox"; readMedia.checked = current.read_media !== false; readMedia.className = "ghh3-opt-check";
             const url = row("API URL", make("input"), true);
             const customModelGroup = make("div"); customModelGroup.className = "ghh3-opt-model-row";
@@ -2517,29 +2581,6 @@ function nodeColorToCss(value) {
                 new Option("OpenAI Responses", "responses"),
                 new Option("Gemini GenerateContent", "gemini"),
             );
-            const runninghubModelGroup = make("div"); runninghubModelGroup.className = "ghh3-opt-model-row";
-            const runninghubModel = make("select"); runninghubModel.className = "ghh3-opt-model-native"; runninghubModelGroup.append(runninghubModel);
-            const runninghubModelPicker = make("button"); runninghubModelPicker.type = "button"; runninghubModelPicker.className = "ghh3-opt-model-picker"; runninghubModelGroup.append(runninghubModelPicker);
-            const refreshRunninghubModels = make("button"); refreshRunninghubModels.type = "button"; refreshRunninghubModels.className = "ghh3-opt-refresh"; refreshRunninghubModels.innerHTML = refreshIcon; refreshRunninghubModels.title = "刷新 RunningHub 模型"; refreshRunninghubModels.setAttribute("aria-label", "刷新 RunningHub 模型"); runninghubModelGroup.append(refreshRunninghubModels);
-            const runninghubModelMenu = make("div"); runninghubModelMenu.className = "ghh3-opt-model-menu";
-            const runninghubModelSearch = make("input"); runninghubModelSearch.type = "search"; runninghubModelSearch.placeholder = t("Search models"); runninghubModelSearch.className = "ghh3-opt-model-search";
-            const runninghubModelResults = make("div"); runninghubModelResults.className = "ghh3-opt-model-results";
-            runninghubModelMenu.append(runninghubModelSearch, runninghubModelResults); runninghubModelGroup.append(runninghubModelMenu);
-            row("Model", runninghubModelGroup);
-            const runninghubModelsByProvider = {
-                runninghub: [...(current.runninghub_models || [])],
-                runninghub_overseas: [...(current.runninghub_overseas_models || current.runninghub_models || [])],
-            };
-            let runninghubModels = runninghubModelsByProvider[provider.value] || [];
-            const fillRunninghubModels = (models = runninghubModels, preserveValue = runninghubModel.value || current.model || "openai/gpt-5.6-sol") => {
-                runninghubModels = models || [];
-                runninghubModel.replaceChildren(...runninghubModels.map(value => new Option(value, value)));
-                if ([...runninghubModel.options].some(option => option.value === preserveValue)) runninghubModel.value = preserveValue;
-                else if ([...runninghubModel.options].some(option => option.value === "openai/gpt-5.6-sol")) runninghubModel.value = "openai/gpt-5.6-sol";
-                refreshRunninghubModelPicker(); renderRunninghubModels();
-            };
-            for (const value of runninghubModels) runninghubModel.append(new Option(value, value));
-            runninghubModel.value = providerModels[provider.value] || "openai/gpt-5.6-sol";
             const assistantServices = [...(current.assistant_services || [])];
             const assistantService = row("服务", make("select"));
             assistantService.append(new Option(assistantServices.length ? "请选择服务" : "（未找到小助手服务）", ""));
@@ -2560,28 +2601,6 @@ function nodeColorToCss(value) {
             ruleSelect.append(new Option("默认（节点内置）", ""));
             for (const name of assistantRules) ruleSelect.append(new Option(name, name));
             ruleSelect.value = assistantRules.includes(current.rule) ? current.rule : "";
-            const refreshRunninghubModelPicker = () => { runninghubModelPicker.textContent = runninghubModel.value || ""; };
-            const renderRunninghubModels = () => {
-                const keyword = runninghubModelSearch.value.trim().toLowerCase();
-                const filtered = keyword ? runninghubModels.filter(value => value.toLowerCase().includes(keyword)) : runninghubModels;
-                runninghubModelResults.replaceChildren();
-                if (!filtered.length) {
-                    const empty = make("div", {}, t("No matching models")); empty.className = "ghh3-opt-model-empty"; runninghubModelResults.append(empty); return;
-                }
-                for (const value of filtered) {
-                    const option = make("button", {}, value); option.type = "button"; option.className = "ghh3-opt-model-option";
-                    option.classList.toggle("selected", value === runninghubModel.value);
-                    option.onclick = () => { runninghubModel.value = value; refreshRunninghubModelPicker(); runninghubModelMenu.classList.remove("open"); };
-                    runninghubModelResults.append(option);
-                }
-            };
-            refreshRunninghubModelPicker(); renderRunninghubModels();
-            runninghubModelPicker.onclick = () => {
-                const opening = !runninghubModelMenu.classList.contains("open");
-                runninghubModelMenu.classList.toggle("open", opening);
-                if (opening) { runninghubModelSearch.value = ""; renderRunninghubModels(); requestAnimationFrame(() => runninghubModelSearch.focus()); }
-            };
-            runninghubModelSearch.addEventListener("input", renderRunninghubModels);
             const maxTokens = row("Maximum output tokens", make("input"));
             maxTokens.type = "number"; maxTokens.min = "512"; maxTokens.max = "32768"; maxTokens.step = "512";
             maxTokens.title = "单次优化的输出上限；推理型模型会先思考再回答，留够预算才不会空手而归";
@@ -2602,7 +2621,6 @@ function nodeColorToCss(value) {
             unloadHint.textContent = t("Only works for local / LAN API addresses (llama-swap, Ollama, LM Studio…); cloud platforms are ignored");
             dialog.append(unloadHint);
             dialog.addEventListener("pointerdown", event => {
-                if (!runninghubModelGroup.contains(event.target)) runninghubModelMenu.classList.remove("open");
                 if (!customModelGroup.contains(event.target)) customModelMenu.classList.remove("open");
             });
             const withRefreshState = async (button, action) => {
@@ -2611,23 +2629,11 @@ function nodeColorToCss(value) {
                 try { await action(); }
                 finally { button.classList.remove("loading"); button.disabled = false; }
             };
-            refreshRunninghubModels.onclick = () => withRefreshState(refreshRunninghubModels, async () => {
-                const selectedProvider = provider.value === "runninghub_overseas" ? "runninghub_overseas" : "runninghub";
-                const data = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/runninghub-models?provider=${encodeURIComponent(selectedProvider)}`, { cache: "no-store" });
-                const refreshed = selectedProvider === "runninghub_overseas" ? data.runninghub_overseas_models : data.runninghub_models;
-                runninghubModelsByProvider[selectedProvider] = [...(refreshed || [])];
-                fillRunninghubModels(runninghubModelsByProvider[selectedProvider]);
-                optimizerSettings = {
-                    ...(optimizerSettings || current),
-                    runninghub_models: [...runninghubModelsByProvider.runninghub],
-                    runninghub_overseas_models: [...runninghubModelsByProvider.runninghub_overseas],
-                };
-            }).catch(error => alert(error.message));
             refreshCustomModels.onclick = () => withRefreshState(refreshCustomModels, async () => {
                 const fetched = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/custom-models`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ api_url: url.value.trim(), api_key: key.value.trim(), protocol: protocol.value }),
+                    body: JSON.stringify({ api_url: url.value.trim(), protocol: protocol.value }),
                     cache: "no-store",
                 });
                 if (fetched.error) throw new Error(fetched.error);
@@ -2640,31 +2646,23 @@ function nodeColorToCss(value) {
             const sync = () => {
                 const custom = provider.value === "custom";
                 const assistant = provider.value === "assistant";
-                const runninghub = provider.value === "runninghub" || provider.value === "runninghub_overseas";
                 dialog.classList.toggle("custom", custom);
-                key.closest("label")?.classList.toggle("ghh3-opt-hidden", assistant);
                 assistantService.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
                 assistantModel.closest("label")?.classList.toggle("ghh3-opt-hidden", !assistant);
-                runninghubModel.closest("label")?.classList.toggle("ghh3-opt-hidden", !runninghub);
                 model.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 url.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 protocol.closest("label")?.classList.toggle("ghh3-opt-hidden", !custom);
                 const preset = optimizerProviders[provider.value];
-                if (!custom) { url.value = preset.url; model.value = preset.model; protocol.value = preset.protocol; }
+                // 只有预设真的带地址时才覆盖输入框：切到「提示词小助手」（url 为空）
+                // 不能把 custom 里已经填好的 URL/Model 清掉，否则切回来就空了。
+                if (!custom && preset && preset.url) { url.value = preset.url; model.value = preset.model; protocol.value = preset.protocol; }
             };
             url.value = current.api_url || ""; model.value = current.model || ""; protocol.value = current.protocol || "openai";
             provider.addEventListener("change", () => {
-                const previousProvider = provider.dataset.previousValue || current.provider || "runninghub";
+                const previousProvider = provider.dataset.previousValue || current.provider || "assistant";
                 providerApiKeys[previousProvider] = key.value;
-                if (previousProvider === "runninghub" || previousProvider === "runninghub_overseas") {
-                    providerModels[previousProvider] = runninghubModel.value;
-                }
                 key.value = providerApiKeys[provider.value] || "";
                 provider.dataset.previousValue = provider.value;
-                if (provider.value === "runninghub" || provider.value === "runninghub_overseas") {
-                    const preserve = providerModels[provider.value] || optimizerProviders[provider.value].model;
-                    fillRunninghubModels(runninghubModelsByProvider[provider.value] || [], preserve);
-                }
                 sync();
             }); sync();
             provider.dataset.previousValue = provider.value;
@@ -2674,8 +2672,7 @@ function nodeColorToCss(value) {
             save.onclick = async () => {
                 const preset = optimizerProviders[provider.value];
                 const assistant = provider.value === "assistant";
-                const selectedModel = assistant ? assistantModel.value
-                    : (provider.value === "runninghub" || provider.value === "runninghub_overseas") ? runninghubModel.value : model.value;
+                const selectedModel = assistant ? assistantModel.value : model.value;
                 providerApiKeys[provider.value] = key.value;
                 providerModels[provider.value] = selectedModel;
                 normalizeMaxTokens();
@@ -2757,22 +2754,15 @@ function nodeColorToCss(value) {
     }
     async function optimizerMediaPayload(specs) {
         const payload = [];
-        const runninghub = ["runninghub", "runninghub_overseas"].includes(optimizerSettings?.provider);
-        let runninghubImages = 0;
-        let runninghubVideo = false;
         for (const spec of specs) {
             const entry = media.get(spec.slot);
             if (!entry) continue;
             const item = { kind: spec.kind, label: spec.label, labelOnly: !!spec.labelOnly };
             if (optimizerSettings?.read_media !== false && spec.kind === "image") {
-                if (!runninghub || runninghubImages < 8) item.images = [await lowImageData(fileUrl(entry.name))];
-                runninghubImages++;
+                item.images = [await lowImageData(fileUrl(entry.name))];
             }
             else if (optimizerSettings?.read_media !== false && spec.kind === "video" && !spec.labelOnly) {
-                if (runninghub) {
-                    if (!runninghubVideo) item.source_name = entry.name;
-                    runninghubVideo = true;
-                } else item.images = await lowVideoFrames(fileUrl(entry.name));
+                item.images = await lowVideoFrames(fileUrl(entry.name));
             }
             payload.push(item);
         }
@@ -2807,7 +2797,15 @@ function nodeColorToCss(value) {
             prompt.value = value; renderPromptHighlights(); setPromptWidget(node, value);
             syncGroupPrompt(value);
             if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
-                brGroups[brActive].optimizer_before = before ?? null;
+                const g = brGroups[brActive];
+                g.modePrompts = g.modePrompts || {};
+                g.modePrompts[targetMode] = value;
+                g.modeBefore = g.modeBefore || {};
+                g.modeBefore[targetMode] = before ?? null;
+                g.optimizer_before = before ?? null;
+                // 必须立刻落盘：只写内存不 saveGroups() 的话 segments_json 里没有这份快照，
+                // 刷新网页后「恢复优化前」就失效了。
+                saveGroups();
             }
             resetPrompt.classList.add("visible");
         }
@@ -2824,18 +2822,28 @@ function nodeColorToCss(value) {
     optimizerGear.onclick = openOptimizerSettings;
     resetPrompt.onclick = () => {
         if (upstreamConnected()) return;
-        // 分组模式：只还原激活组自己的优化前文本，绝不跨组/跨上下文
+        // 分组模式：只还原激活组自己的优化前文本，绝不跨组/跨上下文。
+        // 注意：该组没有快照时要往下落到「按模式存的快照」，不能直接 return——
+        // 参考模式（all_reference）的优化结果存的是 optimizerBeforeByMode，
+        // 分组那一份可能是 null，直接 return 会表现为「点了没反应」。
         if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
-            const own = brGroups[brActive].optimizer_before;
-            if (own == null) return;
-            prompt.value = cleanPrompt(own); renderPromptHighlights(); setPromptWidget(node, prompt.value);
-            promptByMode[state.mode] = prompt.value;
-            brGroups[brActive].prompt = prompt.value;
-            brGroups[brActive].optimizer_before = null;
-            saveGroups();
-            optimizerBeforeByMode[state.mode] = null; optimizerBefore = null;
-            resetPrompt.classList.remove("visible"); persistState();
-            return;
+            const g = brGroups[brActive];
+            const own = (g.modeBefore && g.modeBefore[state.mode] !== undefined)
+                ? g.modeBefore[state.mode]
+                : g.optimizer_before;
+            if (own != null) {
+                prompt.value = cleanPrompt(own); renderPromptHighlights(); setPromptWidget(node, prompt.value);
+                promptByMode[state.mode] = prompt.value;
+                brGroups[brActive].prompt = prompt.value;
+                if (g.modeBefore) g.modeBefore[state.mode] = null;
+                g.optimizer_before = null;
+                // 恢复的文本也写回该模式那一份
+                if (g.modePrompts) g.modePrompts[state.mode] = prompt.value;
+                saveGroups();
+                optimizerBeforeByMode[state.mode] = null; optimizerBefore = null;
+                resetPrompt.classList.remove("visible"); persistState();
+                return;
+            }
         }
         if (optimizerBefore == null) return;
         if (optimizerCache?.originalPrompt === optimizerBefore) optimizerCache.result = prompt.value;
@@ -2866,22 +2874,6 @@ function nodeColorToCss(value) {
             timer = setTimeout(() => { signal?.removeEventListener("abort", aborted); resolve(); }, milliseconds);
             signal?.addEventListener("abort", aborted, { once: true });
         });
-    }
-    async function runRunningHubOptimization(requestBody, signal) {
-        const started = await fetchOptimizerJson(`${OPTIMIZER_ROUTE}/start`, {
-            method: "POST", signal,
-            body: new Blob([JSON.stringify(requestBody)], { type: "application/json" }),
-        }, false);
-        if (started.status !== "running") throw new Error(started.error || "Prompt optimization failed");
-        while (true) {
-            await waitWithAbort(1500, signal);
-            const status = await fetchOptimizerJson(
-                `${OPTIMIZER_ROUTE}/status?request_id=${encodeURIComponent(requestBody.request_id)}`,
-                { cache: "no-store", signal },
-                false,
-            );
-            if (status.status === "success") return status;
-        }
     }
     async function runPromptOptimization({ automatic = false } = {}) {
         if (optimizing || upstreamConnected() || node.graph !== app.graph || (node.mode != null && node.mode !== 0)) return false;
@@ -3975,15 +3967,22 @@ function nodeColorToCss(value) {
         if (promptActive && !prompt.readOnly) {
             event.preventDefault(); event.stopImmediatePropagation();
             const text = event.clipboardData?.getData("text/plain") || "";
-            // 粘的是分段包 JSON 时：直接建组，不往编辑器里塞几千字
+            // 粘的是分段包 JSON 时：直接建组，不往编辑器里塞几千字。
+            // ⚠️ 不能只看首字符：以 "[Shot 1]" 开头或以 { 开头的普通提示词也会命中，
+            // 那样会被 JSON.parse 拒掉（多行文本里的裸换行 = Bad control character），
+            // 粘贴内容被整个吞掉，只留一条红字报错。所以先探测，真解析不出来就当普通文本。
             const pasted = String(text || "").trim();
             if (pasted.startsWith("[") || pasted.startsWith("{")) {
-                const pending = importSegmentsText(pasted, "replace");
-                if (pending && typeof pending.then === "function") {
-                    pending.then(result => { if (!result.ok && result.silent) notifySegments("", false); }).catch(error => notifySegments(String(error?.message || error), true));
-                    return;
+                const probe = parseSegmentsJson(pasted);
+                if (probe && probe.ok) {
+                    const pending = importSegmentsText(pasted, "replace");
+                    if (pending && typeof pending.then === "function") {
+                        pending.then(result => { if (!result.ok && result.silent) notifySegments("", false); }).catch(error => notifySegments(String(error?.message || error), true));
+                        return;
+                    }
+                    if (pending.ok) return;
                 }
-                if (pending.ok || !pending.silent) return;
+                // 探测失败 → 落下去当普通提示词粘贴，不报错、不拦截
             }
             const before = promptSnapshot();
             const [start, end] = selectionOffsets();
@@ -4046,23 +4045,46 @@ function nodeColorToCss(value) {
     window.addEventListener("dragover", captureMaterialDrop, true);
     window.addEventListener("drop", captureMaterialDrop, true);
     function switchMode(nextMode) {
+        // 切走前：把当前激活组在**当前模式**下的文本与快照存进该组
+        const leavingGroup = brGroups[brActive];
+        if (leavingGroup) {
+            leavingGroup.modePrompts = leavingGroup.modePrompts || {};
+            if (typeof leavingGroup.prompt === "string") leavingGroup.modePrompts[state.mode] = leavingGroup.prompt;
+            leavingGroup.modeBefore = leavingGroup.modeBefore || {};
+            leavingGroup.modeBefore[state.mode] = leavingGroup.optimizer_before ?? null;
+        }
         promptByMode[state.mode] = prompt.value;
         state.mode = nextMode;
         optimizerBefore = optimizerBeforeByMode[state.mode] ?? null;
         prompt.value = cleanPrompt(promptByMode[state.mode]);
-        // 分组模式：编辑器始终显示激活组的提示词（组内容跨模式共享）
+        // 分组模式：换成该组在**新模式**下的文本（每模式各存一份，不再跨模式共享）
         if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
-            prompt.value = cleanPrompt(brGroups[brActive].prompt || "");
+            const g = brGroups[brActive];
+            const modePrompts = g.modePrompts || {};
+            const nextText = typeof modePrompts[nextMode] === "string" ? modePrompts[nextMode] : (g.prompt || "");
+            g.prompt = nextText;
+            g.modePrompts = { ...modePrompts, [nextMode]: nextText };
+            const modeBefore = g.modeBefore || {};
+            g.optimizer_before = modeBefore[nextMode] ?? null;
+            optimizerBefore = g.optimizer_before ?? optimizerBeforeByMode[nextMode] ?? null;
+            prompt.value = cleanPrompt(nextText);
         }
         renderPromptHighlights();
         setPromptWidget(node, prompt.value);
-        resetPrompt.classList.toggle("visible", optimizerBefore != null);
+        // 双来源：分组快照 or 当前模式的快照，任一存在就显示「恢复优化前」
+        resetPrompt.classList.toggle(
+            "visible",
+            optimizerBefore != null || !!(brGroups[brActive] && brGroups[brActive].optimizer_before),
+        );
         setWidget(node, "main_mode", state.mode);
         persistState();
         modeText.classList.toggle("active", state.mode === "text_keyframes");
         modeRef.classList.toggle("active", state.mode === "all_reference");
         updateAdvancedVisibility();
         render();
+        // 立刻落盘：modePrompts / modeBefore 只写内存的话 segments_json 里没有，
+        // 刷新后两套文本就退化成同一份了。
+        saveGroups();
     }
     modeText.onclick = () => switchMode("text_keyframes");
     modeRef.onclick = () => switchMode("all_reference");
@@ -4165,7 +4187,10 @@ function nodeColorToCss(value) {
                 optimizerBeforeByMode.text_keyframes = restoredBeforeByMode.text_keyframes ?? null;
                 optimizerBeforeByMode.all_reference = restoredBeforeByMode.all_reference ?? null;
                 optimizerBefore = optimizerBeforeByMode[state.mode] ?? null;
-                resetPrompt.classList.toggle("visible", optimizerBefore != null);
+                resetPrompt.classList.toggle(
+                    "visible",
+                    optimizerBefore != null || !!(brGroups[brActive] && brGroups[brActive].optimizer_before),
+                );
                 setWidget(node, "main_mode", state.mode);
                 media.clear();
                 // 槽位类型校验：历史错位可能把图片名写进音频槽（反之亦然），恢复时丢弃

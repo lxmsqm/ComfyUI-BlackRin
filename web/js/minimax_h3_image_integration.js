@@ -3921,15 +3921,22 @@ function nodeColorToCss(value) {
         if (promptActive && !prompt.readOnly) {
             event.preventDefault(); event.stopImmediatePropagation();
             const text = event.clipboardData?.getData("text/plain") || "";
-            // 粘的是分段包 JSON 时：直接建组，不往编辑器里塞几千字
+            // 粘的是分段包 JSON 时：直接建组，不往编辑器里塞几千字。
+            // ⚠️ 不能只看首字符：以 "[Shot 1]" 开头或以 { 开头的普通提示词也会命中，
+            // 那样会被 JSON.parse 拒掉（多行文本里的裸换行 = Bad control character），
+            // 粘贴内容被整个吞掉，只留一条红字报错。所以先探测，真解析不出来就当普通文本。
             const pasted = String(text || "").trim();
             if (pasted.startsWith("[") || pasted.startsWith("{")) {
-                const pending = importSegmentsText(pasted, "replace");
-                if (pending && typeof pending.then === "function") {
-                    pending.then(result => { if (!result.ok && result.silent) notifySegments("", false); }).catch(error => notifySegments(String(error?.message || error), true));
-                    return;
+                const probe = parseSegmentsJson(pasted);
+                if (probe && probe.ok) {
+                    const pending = importSegmentsText(pasted, "replace");
+                    if (pending && typeof pending.then === "function") {
+                        pending.then(result => { if (!result.ok && result.silent) notifySegments("", false); }).catch(error => notifySegments(String(error?.message || error), true));
+                        return;
+                    }
+                    if (pending.ok) return;
                 }
-                if (pending.ok || !pending.silent) return;
+                // 探测失败 → 落下去当普通提示词粘贴，不报错、不拦截
             }
             const before = promptSnapshot();
             const [start, end] = selectionOffsets();

@@ -1792,6 +1792,12 @@ function nodeColorToCss(value) {
             tlStrip.appendChild(block);
             startFrame += frames;
         });
+        // 刷新网页 / 加载工作流后也要按当前激活组同步一次「恢复优化前」按钮，
+        // 否则 optimizer_before 明明还在 segments_json 里，按钮却是隐藏的。
+        resetPrompt.classList.toggle(
+            "visible",
+            !!(brGroups[brActive] && brGroups[brActive].optimizer_before) && !upstreamConnected()
+        );
     };
     tlAdd.onclick = () => {
         const baseDuration = brGroups.length
@@ -1811,7 +1817,6 @@ function nodeColorToCss(value) {
     // 主提示词编辑框直接编辑当前选中组（复用原优化器/标签/媒体标记流程）。
     // 面板自身的 input 处理器先同步隐藏 prompt 控件，这里读控件值即为最新文本。
     prompt.addEventListener("input", () => {
-        console.log("[BlackRin H3] input事件: brActive=" + brActive + " 组数=" + brGroups.length + " 文本=" + String(prompt.textContent).slice(0, 30));
         if (brActive < 0 || brActive >= brGroups.length) return;
         brGroups[brActive].prompt = prompt.textContent ?? "";
         saveGroups();
@@ -2762,6 +2767,9 @@ function nodeColorToCss(value) {
             syncGroupPrompt(value);
             if (brGroups.length >= 1 && brActive >= 0 && brActive < brGroups.length) {
                 brGroups[brActive].optimizer_before = before ?? null;
+                // 必须立刻落盘：optimizer_before 只写进内存的 brGroups 而不 saveGroups()
+                // 的话，segments_json 里就没有这份快照，刷新网页后「恢复优化前」就失效了。
+                saveGroups();
             }
             resetPrompt.classList.add("visible");
         }
